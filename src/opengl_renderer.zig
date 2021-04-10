@@ -14,6 +14,13 @@ const c = @cImport({
     @cInclude("fontconfig/fontconfig.h");
 });
 
+pub const Key = @import("key.zig").Key;
+pub const KeyMod = @import("key.zig").KeyMod;
+
+pub const OnKeyCallback = fn (key: Key, mods: u32) void;
+pub const OnCharCallback = fn (codepoint: u32) void;
+pub const OnScrollCallback = fn (dx: f64, dy: f64) void;
+
 const Renderer = struct {
     allocator: *Allocator,
 
@@ -37,6 +44,10 @@ const Renderer = struct {
 
     window_width: i32 = 0,
     window_height: i32 = 0,
+
+    on_key_callback: OnKeyCallback,
+    on_char_callback: OnCharCallback,
+    on_scroll_callback: OnScrollCallback,
 };
 
 var g_renderer: Renderer = undefined;
@@ -343,21 +354,21 @@ pub const Font = struct {
         return atlas;
     }
 
-    pub fn getCharHeight(self: *@This(), font_size: i32) i32 {
+    pub fn getCharHeight(self: *@This(), font_size: u32) i32 {
         return @floatToInt(i32, std.math.round(
-            @intToFloat(f64, self.face.*.height * font_size) / @intToFloat(f64, self.face.*.units_per_EM),
+            @intToFloat(f64, self.face.*.height * @intCast(i32, font_size)) / @intToFloat(f64, self.face.*.units_per_EM),
         ));
     }
 
-    pub fn getCharAdvance(self: *@This(), font_size: i32, codepoint: u32) !i32 {
+    pub fn getCharAdvance(self: *@This(), font_size: u32, codepoint: u32) !i32 {
         const atlas = try self.getAtlas(font_size);
         const glyph = atlas.getGlyph(codepoint);
         return glyph.advance;
     }
 
-    pub fn getCharMaxAscender(self: *@This(), font_size: i32) i32 {
+    pub fn getCharMaxAscender(self: *@This(), font_size: u32) i32 {
         return @floatToInt(i32, std.math.round(
-            @intToFloat(f64, self.face.*.ascender * font_size) / @intToFloat(f64, self.face.*.units_per_EM),
+            @intToFloat(f64, self.face.*.ascender * @intCast(i32, font_size)) / @intToFloat(f64, self.face.*.units_per_EM),
         ));
     }
 };
@@ -385,7 +396,14 @@ const Command = union(CommandTag) {
     },
 };
 
-pub fn init(allocator: *Allocator) !void {
+pub fn init(
+    allocator: *Allocator,
+    options: struct {
+        on_key_callback: OnKeyCallback,
+        on_char_callback: OnCharCallback,
+        on_scroll_callback: OnScrollCallback,
+    },
+) !void {
     if (c.FcInit() != c.FcTrue) {
         return error.FontConfigInitError;
     }
@@ -405,25 +423,49 @@ pub fn init(allocator: *Allocator) !void {
     try glfw.makeContextCurrent(glfw_window);
     try gl.load(@as(?*c_void, null), struct {
         fn callback(ctx: ?*c_void, name: [:0]const u8) ?*c_void {
-            return @intToPtr(?*c_void, @ptrToInt(glfw.getProcAddress(name) catch unreachable));
+            return @intToPtr(
+                ?*c_void,
+                @ptrToInt(glfw.getProcAddress(name) catch unreachable),
+            );
         }
     }.callback);
     try glfw.swapInterval(1);
 
     _ = try glfw.setFramebufferSizeCallback(glfw_window, struct {
-        fn callback(_: *glfw.Window, width: c_int, height: c_int) callconv(.C) void {}
+        fn callback(
+            _: *glfw.Window,
+            width: c_int,
+            height: c_int,
+        ) callconv(.C) void {}
     }.callback);
 
     _ = try glfw.setCharCallback(glfw_window, struct {
-        fn callback(_: *glfw.Window, codepoint: c_uint) callconv(.C) void {}
+        fn callback(
+            _: *glfw.Window,
+            codepoint: c_uint,
+        ) callconv(.C) void {
+            g_renderer.on_char_callback(@intCast(u32, codepoint));
+        }
     }.callback);
 
     _ = try glfw.setKeyCallback(glfw_window, struct {
-        fn callback(_: *glfw.Window, key: c_int, scancode: c_int, action: c_int, mods: c_int) callconv(.C) void {}
+        fn callback(
+            _: *glfw.Window,
+            key: c_int,
+            scancode: c_int,
+            action: c_int,
+            mods: c_int,
+        ) callconv(.C) void {
+            if (action == @enumToInt(glfw.KeyState.Press) or action == @enumToInt(glfw.KeyState.Repeat)) {
+                g_renderer.on_key_callback(@intToEnum(Key, key), @intCast(u32, mods));
+            }
+        }
     }.callback);
 
     _ = try glfw.setScrollCallback(glfw_window, struct {
-        fn callback(_: *glfw.Window, xoffset: f64, yoffset: f64) callconv(.C) void {}
+        fn callback(_: *glfw.Window, xoffset: f64, yoffset: f64) callconv(.C) void {
+            g_renderer.on_scroll_callback(xoffset, yoffset);
+        }
     }.callback);
 
     var vertex_array: u32 = 0;
@@ -520,6 +562,10 @@ pub fn init(allocator: *Allocator) !void {
 
         .fc_config = fc_config,
         .ft_library = ft_library,
+
+        .on_key_callback = options.on_key_callback,
+        .on_char_callback = options.on_char_callback,
+        .on_scroll_callback = options.on_scroll_callback,
     };
 }
 
@@ -743,7 +789,7 @@ pub fn drawText(
 
     const atlas = try font.getAtlas(@intCast(i32, font_size));
 
-    const max_ascender = font.getCharMaxAscender(@intCast(i32, font_size));
+    const max_ascender = font.getCharMaxAscender(font_size);
 
     const view = try std.unicode.Utf8View.init(text);
     var iter = view.iterator();
