@@ -166,8 +166,18 @@ pub const Font = struct {
     face: c.FT_Face,
     atlases: [MAX_FONT_SIZE]?*FontAtlas = [_]?*FontAtlas{null} ** MAX_FONT_SIZE,
 
-    pub fn init(base_font_name: [*:0]const u8, style: [*:0]const u8) !*Font {
-        var path = try getPath(g_renderer.allocator, base_font_name);
+    pub fn init(base_font_name: []const u8, style: []const u8) !*Font {
+        const full_font_name = try mem.concat(
+            g_renderer.allocator,
+            u8,
+            &[_][]const u8{ base_font_name, ":", style },
+        );
+        defer g_renderer.allocator.free(full_font_name);
+
+        const full_font_name_z = try g_renderer.allocator.dupeZ(u8, full_font_name);
+        defer g_renderer.allocator.free(full_font_name_z);
+
+        var path = try getPath(g_renderer.allocator, full_font_name_z);
         defer g_renderer.allocator.destroy(path);
 
         const file = try std.fs.openFileAbsolute(mem.spanZ(path), .{ .read = true });
@@ -684,14 +694,14 @@ pub fn drawRect(
 pub fn drawCodepoint(
     codepoint: u32,
     font: *Font,
-    font_size: i32,
+    font_size: u32,
     x: i32,
     y: i32,
 ) !i32 {
-    const atlas = try font.getAtlas(font_size);
+    const atlas = try font.getAtlas(@intCast(i32, font_size));
     const glyph = atlas.getGlyph(codepoint);
 
-    var max_ascender = font.getCharMaxAscender(font_size);
+    const max_ascender = font.getCharMaxAscender(@intCast(i32, font_size));
 
     switch (codepoint) {
         '\t' | '\n' | '\r' => {},
@@ -717,6 +727,61 @@ pub fn drawCodepoint(
     }
 
     return glyph.*.advance;
+}
+
+pub fn drawText(
+    text: []const u8,
+    font: *Font,
+    font_size: u32,
+    x: i32,
+    y: i32,
+    options: struct {
+        tab_width: i32 = 4,
+    },
+) !i32 {
+    var advance: i32 = 0;
+
+    const atlas = try font.getAtlas(@intCast(i32, font_size));
+
+    const max_ascender = font.getCharMaxAscender(@intCast(i32, font_size));
+
+    const view = try std.unicode.Utf8View.init(text);
+    var iter = view.iterator();
+    while (iter.nextCodepoint()) |codepoint| {
+        const glyph = atlas.getGlyph(codepoint);
+
+        var glyph_advance = glyph.*.advance;
+
+        switch (codepoint) {
+            '\t' => {
+                glyph_advance *= options.tab_width;
+            },
+            '\n' | '\r' => {},
+            else => {
+                try drawRectInternal(
+                    &Rect{
+                        .x = advance + x + glyph.*.xoff,
+                        .y = y + (max_ascender - glyph.*.yoff),
+                        .w = glyph.*.w,
+                        .h = glyph.*.h,
+                    },
+                    &Rect{
+                        .x = glyph.*.x,
+                        .y = glyph.*.y,
+                        .w = glyph.*.w,
+                        .h = glyph.*.h,
+                    },
+                    atlas.texture,
+                    @intCast(u32, atlas.width),
+                    @intCast(u32, atlas.height),
+                );
+            },
+        }
+
+        advance += glyph_advance;
+    }
+
+    return advance;
 }
 
 fn drawRectInternal(
