@@ -45,15 +45,15 @@ pub const BufferPanel = struct {
     }
 
     fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!void {
-        std.log.info("key: {s}", .{@tagName(key)});
+        // std.log.info("key: {s}", .{@tagName(key)});
     }
 
     fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!void {
-        std.log.info("codepoint: {}", .{codepoint});
+        // std.log.info("codepoint: {}", .{codepoint});
     }
 
     fn onScroll(panel: *editor.Panel, dx: f64, dy: f64) anyerror!void {
-        std.log.info("scroll: {} {}", .{ dx, dy });
+        // std.log.info("scroll: {} {}", .{ dx, dy });
     }
 
     fn registerVT() anyerror!void {}

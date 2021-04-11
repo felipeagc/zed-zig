@@ -29,7 +29,7 @@ const Editor = struct {
     panels: std.ArrayList(*Panel),
     selected_panel: usize = 0,
 
-    global_keymap: KeyMap,
+    global_keymap: *KeyMap,
 };
 
 pub const PanelVT = struct {
@@ -54,7 +54,12 @@ pub const Panel = struct {
 var g_editor: Editor = undefined;
 
 fn onKey(key: renderer.Key, mods: u32) void {
-    if (!g_editor.global_keymap.onKey(key, mods)) {
+    const got_binding = g_editor.global_keymap.onKey(key, mods) catch |err| blk: {
+        std.log.info("onKey error: {}", .{err});
+        break :blk false;
+    };
+
+    if (!got_binding) {
         var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
         if (panel.vt.on_key) |panel_on_key| {
             panel_on_key(panel, key, mods) catch |err| {
@@ -65,7 +70,12 @@ fn onKey(key: renderer.Key, mods: u32) void {
 }
 
 fn onChar(codepoint: u32) void {
-    if (!g_editor.global_keymap.onChar(codepoint)) {
+    const got_binding = g_editor.global_keymap.onChar(codepoint) catch |err| blk: {
+        std.log.info("onChar error: {}", .{err});
+        break :blk false;
+    };
+
+    if (!got_binding) {
         var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
         if (panel.vt.on_char) |panel_on_char| {
             panel_on_char(panel, codepoint) catch |err| {
@@ -119,6 +129,20 @@ pub fn init(allocator: *Allocator) !void {
     try setFace("status_line_focused_foreground", .{ 0x0c, 0x15, 0x1b });
 
     try registerPanelVT(&@import("buffer_panel.zig").VT);
+
+    try g_editor.global_keymap.bind("C-j", struct {
+        fn callback(count: ?i32, object: ?u32) anyerror!void {
+            g_editor.selected_panel +%= 1;
+            g_editor.selected_panel %= (g_editor.panels.items.len);
+        }
+    }.callback);
+
+    try g_editor.global_keymap.bind("C-k", struct {
+        fn callback(count: ?i32, object: ?u32) anyerror!void {
+            g_editor.selected_panel -%= 1;
+            g_editor.selected_panel %= (g_editor.panels.items.len);
+        }
+    }.callback);
 }
 
 pub fn deinit() void {
