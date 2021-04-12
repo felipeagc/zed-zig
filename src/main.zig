@@ -19,6 +19,8 @@ pub fn main() anyerror!void {
         \\
         \\olá mundo -- em português
         );
+
+    try buffer.insert("yo\n", 1, 0);
     // var buffer = try Buffer.init(allocator, "abc");
     defer buffer.deinit();
 

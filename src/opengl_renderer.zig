@@ -1,6 +1,4 @@
 const std = @import("std");
-const glfw = @import("glfw.zig");
-const gl = @import("gl.zig");
 const log = std.log;
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
@@ -12,6 +10,8 @@ const c = @cImport({
     @cInclude("freetype/freetype.h");
     @cInclude("freetype/ftoutln.h");
     @cInclude("fontconfig/fontconfig.h");
+    @cInclude("epoxy/gl.h");
+    @cInclude("GLFW/glfw3.h");
 });
 
 pub const Key = @import("key.zig").Key;
@@ -24,7 +24,7 @@ pub const OnScrollCallback = fn (dx: f64, dy: f64) void;
 const Renderer = struct {
     allocator: *Allocator,
 
-    window: *glfw.Window,
+    window: *c.GLFWwindow,
     shader: Program,
     vertex_buffer: u32,
     index_buffer: u32,
@@ -95,39 +95,39 @@ const Program = struct {
         var info_log: [512:0]u8 = undefined;
         info_log[0] = 0;
 
-        var vertex_shader = gl.createShader(gl.VERTEX_SHADER);
-        gl.shaderSource(vertex_shader, 1, &vertex_text.ptr, null);
-        gl.compileShader(vertex_shader);
-        gl.getShaderiv(vertex_shader, gl.COMPILE_STATUS, &success);
+        var vertex_shader = c.glCreateShader(c.GL_VERTEX_SHADER);
+        c.glShaderSource(vertex_shader, 1, &vertex_text.ptr, null);
+        c.glCompileShader(vertex_shader);
+        c.glGetShaderiv(vertex_shader, c.GL_COMPILE_STATUS, &success);
         if (success == 0) {
-            gl.getShaderInfoLog(vertex_shader, info_log.len, null, &info_log[0]);
+            c.glGetShaderInfoLog(vertex_shader, info_log.len, null, &info_log[0]);
             std.debug.print("Shader compile error:\n{s}\n", .{info_log});
             return error.ShaderCompileError;
         }
 
-        var fragment_shader = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(fragment_shader, 1, &fragment_text.ptr, null);
-        gl.compileShader(fragment_shader);
-        gl.getShaderiv(fragment_shader, gl.COMPILE_STATUS, &success);
+        var fragment_shader = c.glCreateShader(c.GL_FRAGMENT_SHADER);
+        c.glShaderSource(fragment_shader, 1, &fragment_text.ptr, null);
+        c.glCompileShader(fragment_shader);
+        c.glGetShaderiv(fragment_shader, c.GL_COMPILE_STATUS, &success);
         if (success == 0) {
-            gl.getShaderInfoLog(fragment_shader, info_log.len, null, &info_log[0]);
+            c.glGetShaderInfoLog(fragment_shader, info_log.len, null, &info_log[0]);
             std.debug.print("Shader compile error:\n{s}\n", .{info_log});
             return error.ShaderCompileError;
         }
 
-        var shader_program = gl.createProgram();
-        gl.attachShader(shader_program, vertex_shader);
-        gl.attachShader(shader_program, fragment_shader);
-        gl.linkProgram(shader_program);
-        gl.getProgramiv(shader_program, gl.LINK_STATUS, &success);
+        var shader_program = c.glCreateProgram();
+        c.glAttachShader(shader_program, vertex_shader);
+        c.glAttachShader(shader_program, fragment_shader);
+        c.glLinkProgram(shader_program);
+        c.glGetProgramiv(shader_program, c.GL_LINK_STATUS, &success);
         if (success == 0) {
-            gl.getProgramInfoLog(shader_program, info_log.len, null, &info_log[0]);
+            c.glGetProgramInfoLog(shader_program, info_log.len, null, &info_log[0]);
             std.debug.print("Shader link error:\n{s}\n", .{info_log});
             return error.ShaderLinkError;
         }
 
-        gl.deleteShader(vertex_shader);
-        gl.deleteShader(fragment_shader);
+        c.glDeleteShader(vertex_shader);
+        c.glDeleteShader(fragment_shader);
 
         return Program{
             .id = shader_program,
@@ -135,11 +135,11 @@ const Program = struct {
     }
 
     fn deinit(self: *Program) void {
-        gl.deleteProgram(self.id);
+        c.glDeleteProgram(self.id);
     }
 
     fn use(self: *Program) void {
-        gl.useProgram(self.id);
+        c.glUseProgram(self.id);
     }
 };
 
@@ -220,7 +220,7 @@ pub const Font = struct {
         _ = c.FT_Done_Face(self.face);
         for (self.atlases) |maybe_atlas| {
             if (maybe_atlas) |atlas| {
-                gl.deleteTextures(1, &atlas.texture);
+                c.glDeleteTextures(1, &atlas.texture);
                 g_renderer.allocator.destroy(atlas);
             }
         }
@@ -329,23 +329,23 @@ pub const Font = struct {
             pen_x += bmp.width + 1;
         }
 
-        gl.genTextures(1, &atlas.texture);
-        gl.bindTexture(gl.TEXTURE_2D, atlas.texture);
+        c.glGenTextures(1, &atlas.texture);
+        c.glBindTexture(c.GL_TEXTURE_2D, atlas.texture);
 
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_REPEAT);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_REPEAT);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_NEAREST);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_NEAREST);
 
-        gl.texImage2D(
-            gl.TEXTURE_2D,
+        c.glTexImage2D(
+            c.GL_TEXTURE_2D,
             0,
-            gl.RGBA,
+            c.GL_RGBA,
             atlas.width,
             atlas.height,
             0,
-            gl.RGBA,
-            gl.UNSIGNED_BYTE,
+            c.GL_RGBA,
+            c.GL_UNSIGNED_BYTE,
             pixels.ptr,
         );
 
@@ -414,56 +414,56 @@ pub fn init(
         return error.FreetypeInitError;
     }
 
-    try glfw.init();
+    if (c.glfwInit() != c.GLFW_TRUE) {
+        return error.GlfwInitError;
+    }
 
-    try glfw.windowHint(.ContextVersionMajor, 3);
-    try glfw.windowHint(.ContextVersionMinor, 2);
-    var glfw_window = try glfw.createWindow(800, 600, "Zed", null, null);
-
-    try glfw.makeContextCurrent(glfw_window);
-    try gl.load(@as(?*c_void, null), struct {
-        fn callback(ctx: ?*c_void, name: [:0]const u8) ?*c_void {
-            return @intToPtr(
-                ?*c_void,
-                @ptrToInt(glfw.getProcAddress(name) catch unreachable),
-            );
+    _ = c.glfwSetErrorCallback(struct {
+        fn callback(error_code: c_int, description: [*c]const u8) callconv(.C) void {
+            std.log.err("{s}", .{description});
         }
     }.callback);
-    try glfw.swapInterval(1);
 
-    _ = try glfw.setFramebufferSizeCallback(glfw_window, struct {
+    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, 3);
+    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, 2);
+    var glfw_window = c.glfwCreateWindow(800, 600, "Zed", null, null) orelse return error.GlfwInitError;
+
+    c.glfwMakeContextCurrent(glfw_window);
+    c.glfwSwapInterval(1);
+
+    _ = c.glfwSetFramebufferSizeCallback(glfw_window, struct {
         fn callback(
-            _: *glfw.Window,
+            _: ?*c.GLFWwindow,
             width: c_int,
             height: c_int,
         ) callconv(.C) void {}
     }.callback);
 
-    _ = try glfw.setCharCallback(glfw_window, struct {
+    _ = c.glfwSetCharCallback(glfw_window, struct {
         fn callback(
-            _: *glfw.Window,
+            _: ?*c.GLFWwindow,
             codepoint: c_uint,
         ) callconv(.C) void {
             g_renderer.on_char_callback(@intCast(u32, codepoint));
         }
     }.callback);
 
-    _ = try glfw.setKeyCallback(glfw_window, struct {
+    _ = c.glfwSetKeyCallback(glfw_window, struct {
         fn callback(
-            _: *glfw.Window,
+            _: ?*c.GLFWwindow,
             key: c_int,
             scancode: c_int,
             action: c_int,
             mods: c_int,
         ) callconv(.C) void {
-            if (action == @enumToInt(glfw.KeyState.Press) or action == @enumToInt(glfw.KeyState.Repeat)) {
+            if (action == c.GLFW_PRESS or action == c.GLFW_REPEAT) {
                 g_renderer.on_key_callback(@intToEnum(Key, key), @intCast(u32, mods));
             }
         }
     }.callback);
 
-    _ = try glfw.setScrollCallback(glfw_window, struct {
-        fn callback(_: *glfw.Window, xoffset: f64, yoffset: f64) callconv(.C) void {
+    _ = c.glfwSetScrollCallback(glfw_window, struct {
+        fn callback(_: ?*c.GLFWwindow, xoffset: f64, yoffset: f64) callconv(.C) void {
             g_renderer.on_scroll_callback(xoffset, yoffset);
         }
     }.callback);
@@ -473,77 +473,77 @@ pub fn init(
     var index_buffer: u32 = 0;
 
     {
-        gl.genVertexArrays(1, &vertex_array);
-        gl.bindVertexArray(vertex_array);
+        c.glGenVertexArrays(1, &vertex_array);
+        c.glBindVertexArray(vertex_array);
 
-        gl.genBuffers(1, &vertex_buffer);
-        gl.genBuffers(1, &index_buffer);
+        c.glGenBuffers(1, &vertex_buffer);
+        c.glGenBuffers(1, &index_buffer);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, index_buffer);
+        c.glBindBuffer(c.GL_ARRAY_BUFFER, vertex_buffer);
+        c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, index_buffer);
 
-        gl.vertexAttribPointer(
+        c.glVertexAttribPointer(
             0,
             2,
-            gl.FLOAT,
-            gl.FALSE,
+            c.GL_FLOAT,
+            c.GL_FALSE,
             @sizeOf(Vertex),
             @intToPtr(*allowzero c_void, @byteOffsetOf(Vertex, "pos")),
         );
-        gl.enableVertexAttribArray(0);
+        c.glEnableVertexAttribArray(0);
 
-        gl.vertexAttribPointer(
+        c.glVertexAttribPointer(
             1,
             2,
-            gl.FLOAT,
-            gl.FALSE,
+            c.GL_FLOAT,
+            c.GL_FALSE,
             @sizeOf(Vertex),
             @intToPtr(*allowzero c_void, @byteOffsetOf(Vertex, "texcoord")),
         );
-        gl.enableVertexAttribArray(1);
+        c.glEnableVertexAttribArray(1);
 
-        gl.vertexAttribPointer(
+        c.glVertexAttribPointer(
             2,
             4,
-            gl.UNSIGNED_BYTE,
-            gl.TRUE,
+            c.GL_UNSIGNED_BYTE,
+            c.GL_TRUE,
             @sizeOf(Vertex),
             @intToPtr(*allowzero c_void, @byteOffsetOf(Vertex, "color")),
         );
-        gl.enableVertexAttribArray(2);
+        c.glEnableVertexAttribArray(2);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, 0);
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
-        gl.bindVertexArray(0);
+        c.glBindBuffer(c.GL_ARRAY_BUFFER, 0);
+        c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, 0);
+        c.glBindVertexArray(0);
     }
 
     var white_texture: u32 = 0;
     {
         var pixels: [4]u8 = [_]u8{ 255, 255, 255, 255 };
-        gl.genTextures(1, &white_texture);
-        gl.bindTexture(gl.TEXTURE_2D, white_texture);
+        c.glGenTextures(1, &white_texture);
+        c.glBindTexture(c.GL_TEXTURE_2D, white_texture);
 
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_REPEAT);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_REPEAT);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_NEAREST);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_NEAREST);
 
-        gl.texImage2D(
-            gl.TEXTURE_2D,
+        c.glTexImage2D(
+            c.GL_TEXTURE_2D,
             0,
-            gl.RGBA,
+            c.GL_RGBA,
             1,
             1,
             0,
-            gl.RGBA,
-            gl.UNSIGNED_BYTE,
+            c.GL_RGBA,
+            c.GL_UNSIGNED_BYTE,
             &pixels[0],
         );
 
-        gl.bindTexture(gl.TEXTURE_2D, 0);
+        c.glBindTexture(c.GL_TEXTURE_2D, 0);
     }
 
-    try glfw.setWindowUserPointer(glfw_window, @ptrCast(*c_void, &g_renderer));
+    c.glfwSetWindowUserPointer(glfw_window, @ptrCast(*c_void, &g_renderer));
     g_renderer.allocator = allocator;
     g_renderer.fc_config = fc_config;
 
@@ -570,29 +570,29 @@ pub fn init(
 }
 
 pub fn deinit() void {
-    gl.deleteTextures(1, &g_renderer.white_texture);
-    gl.deleteVertexArrays(1, &g_renderer.vertex_array);
-    gl.deleteBuffers(1, &g_renderer.vertex_buffer);
-    gl.deleteBuffers(1, &g_renderer.index_buffer);
+    c.glDeleteTextures(1, &g_renderer.white_texture);
+    c.glDeleteVertexArrays(1, &g_renderer.vertex_array);
+    c.glDeleteBuffers(1, &g_renderer.vertex_buffer);
+    c.glDeleteBuffers(1, &g_renderer.index_buffer);
     g_renderer.shader.deinit();
     g_renderer.commands.deinit();
     g_renderer.vertices.deinit();
     g_renderer.indices.deinit();
-    glfw.destroyWindow(g_renderer.window) catch unreachable;
-    glfw.terminate() catch unreachable;
+    c.glfwDestroyWindow(g_renderer.window);
+    c.glfwTerminate();
     c.FcConfigDestroy(g_renderer.fc_config);
     c.FcFini();
 }
 
 pub fn shouldClose() bool {
-    return glfw.windowShouldClose(g_renderer.window) catch unreachable;
+    return c.glfwWindowShouldClose(g_renderer.window) == c.GLFW_TRUE;
 }
 
 pub fn beginFrame() !void {
     if (g_renderer.should_redraw) {
-        try glfw.pollEvents();
+        c.glfwPollEvents();
     } else {
-        try glfw.waitEvents();
+        c.glfwWaitEvents();
     }
     g_renderer.should_redraw = false;
 
@@ -612,53 +612,53 @@ pub fn beginFrame() !void {
 }
 
 pub fn endFrame() !void {
-    gl.enable(gl.BLEND);
-    gl.enable(gl.SCISSOR_TEST);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    c.glEnable(c.GL_BLEND);
+    c.glEnable(c.GL_SCISSOR_TEST);
+    c.glBlendFunc(c.GL_SRC_ALPHA, c.GL_ONE_MINUS_SRC_ALPHA);
 
-    gl.viewport(0, 0, g_renderer.window_width, g_renderer.window_height);
+    c.glViewport(0, 0, g_renderer.window_width, g_renderer.window_height);
 
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.clearColor(0, 0, 0, 0);
+    c.glClear(c.GL_COLOR_BUFFER_BIT | c.GL_DEPTH_BUFFER_BIT);
+    c.glClearColor(0, 0, 0, 0);
 
-    gl.bindVertexArray(g_renderer.vertex_array);
+    c.glBindVertexArray(g_renderer.vertex_array);
 
-    gl.bindBuffer(gl.ARRAY_BUFFER, g_renderer.vertex_buffer);
-    gl.bufferData(
-        gl.ARRAY_BUFFER,
+    c.glBindBuffer(c.GL_ARRAY_BUFFER, g_renderer.vertex_buffer);
+    c.glBufferData(
+        c.GL_ARRAY_BUFFER,
         @sizeOf(Vertex) * @intCast(isize, g_renderer.vertices.items.len),
         g_renderer.vertices.items.ptr,
-        gl.DYNAMIC_DRAW,
+        c.GL_DYNAMIC_DRAW,
     );
 
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, g_renderer.index_buffer);
-    gl.bufferData(
-        gl.ELEMENT_ARRAY_BUFFER,
+    c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, g_renderer.index_buffer);
+    c.glBufferData(
+        c.GL_ELEMENT_ARRAY_BUFFER,
         @sizeOf(Index) * @intCast(isize, g_renderer.indices.items.len),
         g_renderer.indices.items.ptr,
-        gl.DYNAMIC_DRAW,
+        c.GL_DYNAMIC_DRAW,
     );
 
     g_renderer.shader.use();
 
-    var atlas_uniform_loc = gl.getUniformLocation(g_renderer.shader.id, "atlas_texture");
+    var atlas_uniform_loc = c.glGetUniformLocation(g_renderer.shader.id, "atlas_texture");
 
     for (g_renderer.commands.items) |cmd| {
         switch (cmd) {
             .draw => |draw| {
-                gl.activeTexture(gl.TEXTURE0);
-                gl.bindTexture(gl.TEXTURE_2D, draw.texture);
-                gl.uniform1i(atlas_uniform_loc, 0);
+                c.glActiveTexture(c.GL_TEXTURE0);
+                c.glBindTexture(c.GL_TEXTURE_2D, draw.texture);
+                c.glUniform1i(atlas_uniform_loc, 0);
 
-                gl.drawElements(
-                    gl.TRIANGLES,
+                c.glDrawElements(
+                    c.GL_TRIANGLES,
                     @intCast(c_int, draw.index_count),
-                    if (@sizeOf(Index) == 2) gl.UNSIGNED_SHORT else gl.UNSIGNED_INT,
+                    if (@sizeOf(Index) == 2) c.GL_UNSIGNED_SHORT else c.GL_UNSIGNED_INT,
                     @intToPtr(?*c_void, draw.first_index * @sizeOf(Index)),
                 );
             },
             .set_scissor => |scissor| {
-                gl.scissor(
+                c.glScissor(
                     scissor.rect.x,
                     scissor.rect.y,
                     scissor.rect.w,
@@ -668,11 +668,11 @@ pub fn endFrame() !void {
         }
     }
 
-    gl.bindVertexArray(0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, 0);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, 0);
+    c.glBindVertexArray(0);
+    c.glBindBuffer(c.GL_ARRAY_BUFFER, 0);
+    c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    try glfw.swapBuffers(g_renderer.window);
+    c.glfwSwapBuffers(g_renderer.window);
 }
 
 pub fn requestRedraw() void {
@@ -680,7 +680,7 @@ pub fn requestRedraw() void {
 }
 
 pub fn getClipboardString(allocator: *Allocator) !?[]const u8 {
-    var maybe_c_str = try glfw.getClipboardString(g_renderer.window);
+    var maybe_c_str = c.glfwGetClipboardString(g_renderer.window);
     if (maybe_c_str) |c_str| {
         return try allocator.dupe(u8, mem.spanZ(c_str));
     }
@@ -690,11 +690,11 @@ pub fn getClipboardString(allocator: *Allocator) !?[]const u8 {
 pub fn setClipboardString(str: []const u8) !void {
     var str_z = try g_renderer.allocator.dupeZ(u8, str);
     defer g_renderer.allocator.free(str_z);
-    try glfw.setClipboardString(g_renderer.window, str_z);
+    c.glfwSetClipboardString(g_renderer.window, str_z);
 }
 
 pub fn getWindowSize(w: *i32, h: *i32) !void {
-    try glfw.getFramebufferSize(g_renderer.window, w, h);
+    c.glfwGetFramebufferSize(g_renderer.window, w, h);
 }
 
 fn pushCommand(cmd: Command) !void {

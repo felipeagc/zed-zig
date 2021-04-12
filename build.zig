@@ -18,6 +18,7 @@ pub fn build(b: *std.build.Builder) void {
 
     exe.linkLibC();
     exe.linkSystemLibrary("glfw");
+    exe.linkSystemLibrary("epoxy");
     exe.linkSystemLibrary("oniguruma");
     exe.linkSystemLibrary("fontconfig");
     exe.linkSystemLibrary("freetype");
