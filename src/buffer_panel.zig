@@ -1,6 +1,7 @@
 const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
+const Buffer = @import("buffer.zig").Buffer;
 const Allocator = std.mem.Allocator;
 
 pub const VT = editor.PanelVT{
@@ -21,12 +22,14 @@ pub const VT = editor.PanelVT{
 pub const BufferPanel = struct {
     panel: editor.Panel,
     allocator: *Allocator,
+    buffer: *Buffer,
 
-    pub fn init(allocator: *Allocator) !*editor.Panel {
+    pub fn init(allocator: *Allocator, buffer: *Buffer) !*editor.Panel {
         var self = try allocator.create(BufferPanel);
         self.* = @This(){
             .allocator = allocator,
             .panel = .{ .vt = &VT },
+            .buffer = buffer,
         };
         return &self.panel;
     }
@@ -37,6 +40,25 @@ pub const BufferPanel = struct {
 
     fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const options = editor.getOptions();
+        const font = options.main_font;
+        const font_size = options.main_font_size;
+        const char_height = font.getCharHeight(font_size);
+
+        renderer.setColor(editor.getFace("foreground").color);
+
+        const buffer = self.buffer;
+        for (buffer.lines.items) |line, i| {
+            _ = try renderer.drawText(
+                line.content.items,
+                font,
+                font_size,
+                rect.x,
+                rect.y + (@intCast(i32, i) * char_height),
+                .{},
+            );
+        }
     }
 
     fn deinit(panel: *editor.Panel) void {

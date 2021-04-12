@@ -2,6 +2,7 @@ const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
+const Buffer = @import("buffer.zig").Buffer;
 
 pub fn main() anyerror!void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -12,13 +13,22 @@ pub fn main() anyerror!void {
     try editor.init(allocator);
     defer editor.deinit();
 
+    var buffer = try Buffer.init(allocator, 
+        \\hello world
+        \\second line
+        \\
+        \\olá mundo -- em português
+        );
+    // var buffer = try Buffer.init(allocator, "abc");
+    defer buffer.deinit();
+
     {
-        var buffer_panel = try BufferPanel.init(allocator);
+        var buffer_panel = try BufferPanel.init(allocator, buffer);
         try editor.addPanel(buffer_panel);
     }
 
     {
-        var buffer_panel = try BufferPanel.init(allocator);
+        var buffer_panel = try BufferPanel.init(allocator, buffer);
         try editor.addPanel(buffer_panel);
     }
 
