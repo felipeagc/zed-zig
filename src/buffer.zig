@@ -23,7 +23,7 @@ pub const Buffer = struct {
     allocator: *Allocator,
     lines: ArrayList(Line),
 
-    pub fn init(allocator: *Allocator, content: []const u8) !*Buffer {
+    pub fn init(allocator: *Allocator) !*Buffer {
         var self = try allocator.create(@This());
         self.* = .{
             .allocator = allocator,
@@ -32,12 +32,42 @@ pub const Buffer = struct {
 
         errdefer self.deinit();
 
-        var iter = mem.split(content, "\n");
-        while (iter.next()) |line_content| {
-            try self.lines.append(try Line.init(allocator, line_content));
-        }
+        try self.lines.append(try Line.init(allocator, ""));
 
         return self;
+    }
+
+    pub fn initWithContent(allocator: *Allocator, content: []const u8) !*Buffer {
+        var self = try Buffer.init(allocator);
+        errdefer self.deinit();
+
+        try self.insert(content, 0, 0);
+
+        return self;
+    }
+
+    pub fn clone(self: *@This()) !*Buffer {
+        var new_buffer = try Buffer.init(self.allocator);
+        errdefer new_buffer.deinit();
+
+        for (new_buffer.lines.items) |*line| {
+            line.deinit();
+        }
+
+        try new_buffer.lines.resize(self.lines.items.len);
+
+        for (self.lines.items) |*line, i| {
+            new_buffer.lines.items[i] = try Line.init(self.allocator, line.content.items);
+        }
+
+        return new_buffer;
+    }
+
+    pub fn getLine(self: *@This(), index: usize) ![]const u8 {
+        if (index >= self.lines.items.len) {
+            return error.BufferLineOutOfBounds;
+        }
+        return self.lines.items[index];
     }
 
     pub fn deinit(self: *@This()) void {
@@ -134,6 +164,17 @@ pub const Buffer = struct {
         );
 
         self.lines.shrinkRetainingCapacity(new_line_count);
+    }
+
+    pub fn getEntireContent(self: *@This(), allocator: *Allocator) ![]const u8 {
+        var content = ArrayList(u8).init(allocator);
+
+        for (self.lines.items) |line| {
+            try content.appendSlice(line.content.items);
+            try content.append('\n');
+        }
+
+        return content.toOwnedSlice();
     }
 
     pub fn getContent(
@@ -311,11 +352,22 @@ pub const Buffer = struct {
     }
 };
 
+comptime {
+    _ = Buffer.init;
+    _ = Buffer.initWithContent;
+    _ = Buffer.clone;
+    _ = Buffer.getContent;
+    _ = Buffer.getEntireContent;
+    _ = Buffer.insert;
+    _ = Buffer.delete;
+    _ = Buffer.print;
+}
+
 test "buffer" {
     const allocator = std.testing.allocator;
     const expect = std.testing.expect;
 
-    var buffer = try Buffer.init(allocator,
+    var buffer = try Buffer.initWithContent(allocator,
         \\hello world
         \\second line
         \\
@@ -405,17 +457,48 @@ test "buffer" {
 
     {
         try buffer.delete(0, 10, 39);
-        buffer.print();
+
+        const content = try buffer.getEntireContent(allocator);
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content,
+            \\hello worls
+            \\
+        ));
     }
 
     {
-        try buffer.insert("hello\nyo\nyo\n", 1, 11);
-        buffer.print();
+        try buffer.insert("hello\nyo\nyo\n", 0, 5);
+
+        const content = try buffer.getEntireContent(allocator);
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content,
+            \\hellohello
+            \\yo
+            \\yo
+            \\ worls
+            \\
+        ));
     }
 
-    // {
-    //     try buffer.delete(0, 18, 1);
-    //     try buffer.delete(0, 18, 1);
-    //     buffer.print();
-    // }
+    {
+        try buffer.insert("new content", 10, 2);
+
+        const content = try buffer.getEntireContent(allocator);
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content,
+            \\hellohello
+            \\yo
+            \\yo
+            \\ worlsnew content
+            \\
+        ));
+    }
+
+    {
+        var new_buffer = try buffer.clone();
+        defer new_buffer.deinit();
+    }
 }

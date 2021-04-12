@@ -13,7 +13,7 @@ pub fn main() anyerror!void {
     try editor.init(allocator);
     defer editor.deinit();
 
-    var buffer = try Buffer.init(allocator, 
+    var buffer = try Buffer.initWithContent(allocator, 
         \\hello world
         \\second line
         \\
