@@ -28,6 +28,16 @@ pub fn build(b: *std.build.Builder) void {
         run_cmd.addArgs(args);
     }
 
-    const run_step = b.step("run", "Run the app");
+    const run_step = b.step("run", "Run the editor");
     run_step.dependOn(&run_cmd.step);
+
+    const test_step = b.step("test", "Run tests");
+
+    const tests = [_]*std.build.LibExeObjStep{
+        b.addTest("src/buffer.zig"),
+    };
+    for (tests) |test_| {
+        test_.setBuildMode(mode);
+        test_step.dependOn(&test_.step);
+    }
 }

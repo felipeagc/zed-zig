@@ -5,6 +5,10 @@ const mem = std.mem;
 
 const Line = struct {
     content: ArrayList(u8),
+
+    fn deinit(self: *@This()) void {
+        self.content.deinit();
+    }
 };
 
 pub const Buffer = struct {
@@ -17,6 +21,8 @@ pub const Buffer = struct {
             .allocator = allocator,
             .lines = ArrayList(Line).init(allocator),
         };
+
+        errdefer self.deinit();
 
         var iter = mem.split(content, "\n");
         while (iter.next()) |line_content| {
@@ -33,10 +39,48 @@ pub const Buffer = struct {
 
     pub fn deinit(self: *@This()) void {
         for (self.lines.items) |*line| {
-            line.content.deinit();
+            line.deinit();
         }
         self.lines.deinit();
         self.allocator.destroy(self);
+    }
+
+    pub fn delete(
+        self: *@This(),
+        line_index: usize,
+        column_index: usize,
+        codepoint_length: usize,
+    ) !void {
+        const result = try self.getContentInternal(
+            null,
+            line_index,
+            column_index,
+            codepoint_length,
+        );
+
+        if (result.line_count == 0) return;
+
+        {
+            const first_line: *Line = &self.lines.items[line_index];
+            first_line.content.shrinkRetainingCapacity(0);
+            try first_line.content.appendSlice(result.before_content);
+            try first_line.content.appendSlice(result.after_content);
+        }
+
+        const deleted_lines = self.lines.items[line_index + 1 .. line_index + result.line_count];
+        for (deleted_lines) |*line| {
+            line.deinit();
+        }
+
+        const new_line_count = self.lines.items.len- deleted_lines.len;
+
+        mem.copy(
+            Line,
+            self.lines.items[line_index+1..new_line_count],
+            self.lines.items[line_index+1+deleted_lines.len..self.lines.items.len],
+        );
+
+        self.lines.shrinkRetainingCapacity(new_line_count);
     }
 
     pub fn getContent(
@@ -62,9 +106,11 @@ pub const Buffer = struct {
 
     const GetContentResult = struct {
         content: ?[]u8,
-        content_byte_length: usize,
-        content_codepoint_length: usize,
-        line_count: usize,
+        content_byte_length: usize = 0,
+        content_codepoint_length: usize = 0,
+        before_content: []const u8 = "",
+        after_content: []const u8 = "",
+        line_count: usize = 0,
     };
 
     fn getContentInternal(
@@ -74,15 +120,22 @@ pub const Buffer = struct {
         column_index: usize,
         codepoint_length: usize,
     ) !GetContentResult {
+        if (line_index >= self.lines.items.len or codepoint_length == 0) {
+            return GetContentResult{
+                .content = if (maybe_allocator) |allocator| try allocator.alloc(u8, 0) else null,
+            };
+        }
+
         var content_byte_size: usize = 0;
         var content_codepoint_size: usize = 0;
         var content_line_count: usize = 0;
 
+        const first_line = &self.lines.items[line_index];
+
         var first_line_starting_byte: usize = 0;
         var first_line_starting_codepoint: usize = 0;
         {
-            const line = self.lines.items[line_index];
-            const view = try std.unicode.Utf8View.init(line.content.items);
+            const view = try std.unicode.Utf8View.init(first_line.content.items);
             var iter = view.iterator();
             while (iter.nextCodepointSlice()) |codepoint_slice| {
                 if (first_line_starting_codepoint >= column_index) {
@@ -93,9 +146,12 @@ pub const Buffer = struct {
             }
         }
 
+        var bytes_consumed_in_last_line: usize = 0;
+
         var i: usize = line_index;
         outer: while (i < self.lines.items.len) : (i += 1) {
             content_line_count += 1;
+            bytes_consumed_in_last_line = 0;
 
             if (content_codepoint_size >= codepoint_length) {
                 break :outer;
@@ -112,6 +168,7 @@ pub const Buffer = struct {
             var iter = view.iterator();
             while (iter.nextCodepointSlice()) |codepoint_slice| {
                 content_byte_size += codepoint_slice.len;
+                bytes_consumed_in_last_line += codepoint_slice.len;
                 content_codepoint_size += 1;
 
                 if (content_codepoint_size >= codepoint_length) {
@@ -124,9 +181,19 @@ pub const Buffer = struct {
             content_codepoint_size += 1;
         }
 
+        const last_line = &self.lines.items[line_index + (content_line_count - 1)];
+
+        var before_content: []const u8 = first_line.content.items[0..first_line_starting_byte];
+        var after_content: []const u8 = if (first_line == last_line) blk: {
+            break :blk first_line.content.items[first_line_starting_byte + bytes_consumed_in_last_line ..];
+        } else blk: {
+            break :blk last_line.content.items[bytes_consumed_in_last_line..];
+        };
+
         var maybe_content = if (maybe_allocator) |allocator| blk: {
             var content_pos: usize = 0;
             var content = try allocator.alloc(u8, content_byte_size);
+            errdefer allocator.free(content);
 
             i = line_index;
             outer: while (i < self.lines.items.len) : (i += 1) {
@@ -157,7 +224,10 @@ pub const Buffer = struct {
                 content_pos += 1;
             }
 
-            std.debug.assert(content_pos == content_byte_size);
+            if (content_pos != content_byte_size) {
+                return error.BufferGetContentInvalidContentPos;
+            }
+
             break :blk content;
         } else null;
 
@@ -165,7 +235,109 @@ pub const Buffer = struct {
             .content = maybe_content,
             .content_byte_length = content_byte_size,
             .content_codepoint_length = content_codepoint_size,
+            .before_content = before_content,
+            .after_content = after_content,
             .line_count = content_line_count,
         };
     }
+
+    fn print(self: *@This()) void {
+        std.debug.print("Buffer contents:\n", .{});
+        for (self.lines.items) |line| {
+            std.debug.print("\t\"{s}\"\n", .{line.content.items});
+        }
+    }
 };
+
+test "buffer" {
+    const allocator = std.testing.allocator;
+    const expect = std.testing.expect;
+
+    var buffer = try Buffer.init(allocator,
+        \\hello world
+        \\second line
+        \\
+        \\olá mundo -- em português
+    );
+    defer buffer.deinit();
+
+    {
+        const result = try buffer.getContentInternal(allocator, 0, 0, 0);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, ""));
+        expect(result.line_count == 0);
+    }
+
+    {
+        const result = try buffer.getContentInternal(allocator, 0, 0, 11);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, "hello world"));
+        expect(result.line_count == 1);
+        expect(mem.eql(u8, result.before_content, ""));
+        expect(mem.eql(u8, result.after_content, ""));
+    }
+
+    {
+        const result = try buffer.getContentInternal(allocator, 0, 0, 12);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, "hello world\n"));
+        expect(result.line_count == 2);
+        expect(mem.eql(u8, result.before_content, ""));
+        expect(mem.eql(u8, result.after_content, "second line"));
+    }
+
+    {
+        const result = try buffer.getContentInternal(allocator, 0, 0, 18);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, "hello world\nsecond"));
+        expect(result.line_count == 2);
+        expect(mem.eql(u8, result.before_content, ""));
+        expect(mem.eql(u8, result.after_content, " line"));
+    }
+
+    {
+        const result = try buffer.getContentInternal(allocator, 0, 0, 24);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, "hello world\nsecond line\n"));
+        expect(result.line_count == 3);
+    }
+
+    {
+        const result = try buffer.getContentInternal(allocator, 3, 0, 9);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, "olá mundo"));
+        expect(result.line_count == 1);
+    }
+
+    {
+        const result = try buffer.getContentInternal(allocator, 3, 4, 5);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, "mundo"));
+        expect(result.line_count == 1);
+    }
+
+    {
+        try buffer.delete(0, 10, 39);
+        buffer.print();
+    }
+
+    // {
+    //     try buffer.delete(0, 18, 1);
+    //     try buffer.delete(0, 18, 1);
+    //     buffer.print();
+    // }
+}
