@@ -6,6 +6,14 @@ const mem = std.mem;
 const Line = struct {
     content: ArrayList(u8),
 
+    fn init(allocator: *Allocator, content: []const u8) !Line {
+        var line = Line{
+            .content = ArrayList(u8).init(allocator),
+        };
+        try line.content.appendSlice(content);
+        return line;
+    }
+
     fn deinit(self: *@This()) void {
         self.content.deinit();
     }
@@ -26,12 +34,7 @@ pub const Buffer = struct {
 
         var iter = mem.split(content, "\n");
         while (iter.next()) |line_content| {
-            var line = Line{
-                .content = ArrayList(u8).init(allocator),
-            };
-            try line.content.appendSlice(line_content);
-
-            try self.lines.append(line);
+            try self.lines.append(try Line.init(allocator, line_content));
         }
 
         return self;
@@ -45,12 +48,63 @@ pub const Buffer = struct {
         self.allocator.destroy(self);
     }
 
+    pub fn insert(
+        self: *@This(),
+        text: []const u8,
+        line_index: usize,
+        column_index: usize,
+    ) !void {
+        if (text.len == 0) return;
+
+        var actual_line_index = line_index;
+        var actual_column_index = column_index;
+
+        if (actual_line_index >= self.lines.items.len) {
+            actual_line_index = self.lines.items.len - 1;
+            actual_column_index = try std.unicode.utf8CountCodepoints(
+                self.lines.items[actual_line_index].content.items,
+            );
+        }
+
+        const result = try self.getContentInternal(
+            null,
+            actual_line_index,
+            actual_column_index,
+            0,
+        );
+
+        var inserted_lines = ArrayList(Line).init(self.allocator);
+        defer inserted_lines.deinit();
+
+        var iter = mem.split(text, "\n");
+        while (iter.next()) |line_content| {
+            try inserted_lines.append(try Line.init(self.allocator, line_content));
+        }
+
+        if (inserted_lines.items.len == 0) return;
+
+        var first_line: *Line = &inserted_lines.items[0];
+        try first_line.content.insertSlice(0, result.before_content);
+
+        var last_line = &inserted_lines.items[inserted_lines.items.len - 1];
+        try last_line.content.appendSlice(result.after_content);
+
+        self.lines.items[actual_line_index].deinit();
+        self.lines.items[actual_line_index] = first_line.*;
+
+        if (inserted_lines.items.len > 1) {
+            try self.lines.insertSlice(actual_line_index + 1, inserted_lines.items[1..]);
+        }
+    }
+
     pub fn delete(
         self: *@This(),
         line_index: usize,
         column_index: usize,
         codepoint_length: usize,
     ) !void {
+        if (codepoint_length == 0) return;
+
         const result = try self.getContentInternal(
             null,
             line_index,
@@ -62,8 +116,7 @@ pub const Buffer = struct {
 
         {
             const first_line: *Line = &self.lines.items[line_index];
-            first_line.content.shrinkRetainingCapacity(0);
-            try first_line.content.appendSlice(result.before_content);
+            first_line.content.shrinkRetainingCapacity(result.before_content.len);
             try first_line.content.appendSlice(result.after_content);
         }
 
@@ -72,12 +125,12 @@ pub const Buffer = struct {
             line.deinit();
         }
 
-        const new_line_count = self.lines.items.len- deleted_lines.len;
+        const new_line_count = self.lines.items.len - deleted_lines.len;
 
         mem.copy(
             Line,
-            self.lines.items[line_index+1..new_line_count],
-            self.lines.items[line_index+1+deleted_lines.len..self.lines.items.len],
+            self.lines.items[line_index + 1 .. new_line_count],
+            self.lines.items[line_index + 1 + deleted_lines.len .. self.lines.items.len],
         );
 
         self.lines.shrinkRetainingCapacity(new_line_count);
@@ -120,7 +173,7 @@ pub const Buffer = struct {
         column_index: usize,
         codepoint_length: usize,
     ) !GetContentResult {
-        if (line_index >= self.lines.items.len or codepoint_length == 0) {
+        if (line_index >= self.lines.items.len) {
             return GetContentResult{
                 .content = if (maybe_allocator) |allocator| try allocator.alloc(u8, 0) else null,
             };
@@ -144,6 +197,15 @@ pub const Buffer = struct {
                 first_line_starting_byte += codepoint_slice.len;
                 first_line_starting_codepoint += 1;
             }
+        }
+
+        if (codepoint_length == 0) {
+            return GetContentResult{
+                .content = if (maybe_allocator) |allocator| try allocator.alloc(u8, 0) else null,
+                .before_content = first_line.content.items[0..first_line_starting_byte],
+                .after_content = first_line.content.items[first_line_starting_byte..],
+                .line_count = 0,
+            };
         }
 
         var bytes_consumed_in_last_line: usize = 0;
@@ -313,6 +375,17 @@ test "buffer" {
     }
 
     {
+        const result = try buffer.getContentInternal(allocator, 0, 5, 0);
+        const content = result.content.?;
+        defer allocator.free(content);
+
+        expect(mem.eql(u8, content, ""));
+        expect(mem.eql(u8, result.before_content, "hello"));
+        expect(mem.eql(u8, result.after_content, " world"));
+        expect(result.line_count == 0);
+    }
+
+    {
         const result = try buffer.getContentInternal(allocator, 3, 0, 9);
         const content = result.content.?;
         defer allocator.free(content);
@@ -332,6 +405,11 @@ test "buffer" {
 
     {
         try buffer.delete(0, 10, 39);
+        buffer.print();
+    }
+
+    {
+        try buffer.insert("hello\nyo\nyo\n", 1, 11);
         buffer.print();
     }
 
