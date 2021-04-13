@@ -9,7 +9,7 @@ pub const EditorOptions = struct {
     tab_width: u32 = 4,
     scroll_margin: u32 = 5,
     status_line_padding: u32 = 4,
-    border_size: u32 = 2,
+    border_size: u32 = 1,
 };
 
 const Face = struct {
@@ -29,7 +29,7 @@ const Editor = struct {
     panels: std.ArrayList(*Panel),
     selected_panel: usize = 0,
 
-    global_keymap: *KeyMap,
+    global_keymap: KeyMap,
 };
 
 pub const PanelVT = struct {
@@ -43,7 +43,7 @@ pub const PanelVT = struct {
     on_char: ?fn (self: *Panel, codepoint: u32) anyerror!void = null,
     on_scroll: ?fn (self: *Panel, dx: f64, dy: f64) anyerror!void = null,
 
-    register_vt: ?fn () anyerror!void = null,
+    register_vt: ?fn (allocator: *Allocator) anyerror!void = null,
     unregister_vt: ?fn () void = null,
 };
 
@@ -54,7 +54,7 @@ pub const Panel = struct {
 var g_editor: Editor = undefined;
 
 fn onKey(key: renderer.Key, mods: u32) void {
-    const got_binding = g_editor.global_keymap.onKey(key, mods) catch |err| blk: {
+    const got_binding = g_editor.global_keymap.onKey(key, mods, null) catch |err| blk: {
         std.log.info("onKey error: {}", .{err});
         break :blk false;
     };
@@ -70,7 +70,7 @@ fn onKey(key: renderer.Key, mods: u32) void {
 }
 
 fn onChar(codepoint: u32) void {
-    const got_binding = g_editor.global_keymap.onChar(codepoint) catch |err| blk: {
+    const got_binding = g_editor.global_keymap.onChar(codepoint, null) catch |err| blk: {
         std.log.info("onChar error: {}", .{err});
         break :blk false;
     };
@@ -130,15 +130,37 @@ pub fn init(allocator: *Allocator) !void {
 
     try registerPanelVT(&@import("buffer_panel.zig").VT);
 
+    try g_editor.global_keymap.bind("C-=", struct {
+        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
+            g_editor.options.main_font_size +%= 1;
+            g_editor.options.main_font_size = std.math.clamp(
+                g_editor.options.main_font_size,
+                8,
+                renderer.MAX_FONT_SIZE,
+            );
+        }
+    }.callback);
+
+    try g_editor.global_keymap.bind("C--", struct {
+        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
+            g_editor.options.main_font_size -%= 1;
+            g_editor.options.main_font_size = std.math.clamp(
+                g_editor.options.main_font_size,
+                8,
+                renderer.MAX_FONT_SIZE,
+            );
+        }
+    }.callback);
+
     try g_editor.global_keymap.bind("C-j", struct {
-        fn callback(count: ?i32, object: ?u32) anyerror!void {
+        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
             g_editor.selected_panel +%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
     }.callback);
 
     try g_editor.global_keymap.bind("C-k", struct {
-        fn callback(count: ?i32, object: ?u32) anyerror!void {
+        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
             g_editor.selected_panel -%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
@@ -209,7 +231,7 @@ fn registerPanelVT(vt: *const PanelVT) !void {
     try g_editor.panel_vt_map.put(vt.name, vt_index);
 
     if (vt.register_vt) |register_vt| {
-        try register_vt();
+        try register_vt(g_editor.allocator);
     }
 }
 

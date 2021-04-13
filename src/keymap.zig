@@ -2,7 +2,7 @@ const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Action = fn (count: ?i32, object: ?u32) anyerror!void;
+pub const Action = fn (count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void;
 
 pub const Binding = union(enum) {
     submap: *SubMap,
@@ -34,14 +34,14 @@ pub const SubMap = struct {
         self.allocator.destroy(self);
     }
 
-    fn trigger(self: *@This(), key: []const u8) !?*SubMap {
+    fn trigger(self: *@This(), key: []const u8, user_data: ?*c_void) !?*SubMap {
         if (self.map.get(key)) |binding| {
             switch (binding) {
                 .submap => |submap| {
                     return submap;
                 },
                 .action => |action| {
-                    try action(null, null);
+                    try action(null, null, user_data);
                     return null;
                 },
             }
@@ -56,27 +56,74 @@ pub const KeyMap = struct {
     root_submap: *SubMap,
     current_submap: *SubMap,
 
-    pub fn init(allocator: *Allocator) !*KeyMap {
+    pub fn init(allocator: *Allocator) !KeyMap {
         var root_submap = try SubMap.init(allocator);
 
-        var self = try allocator.create(@This());
-        self.* = .{
+        return KeyMap{
             .allocator = allocator,
             .root_submap = root_submap,
             .current_submap = root_submap,
         };
-
-        return self;
     }
 
     pub fn deinit(self: *@This()) void {
         self.root_submap.deinit();
-        self.allocator.destroy(self);
     }
 
-    pub fn onKey(self: *@This(), key: renderer.Key, mods: u32) !bool {
+    pub fn onKey(
+        self: *@This(),
+        key: renderer.Key,
+        mods: u32,
+        user_data: ?*c_void,
+    ) !bool {
         const valid_key = switch (key) {
-            .space, .escape, .enter, .tab, .backspace, .insert, .delete, .right, .left, .down, .up, .page_up, .page_down, .home, .end, .caps_lock, .scroll_lock, .num_lock, .print_screen, .pause, .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12, .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20, .f21, .f22, .f23, .f24, .f25, .menu => true,
+            .@"<space>",
+            .@"<esc>",
+            .@"<enter>",
+            .@"<tab>",
+            .@"<backspace>",
+            .@"<insert>",
+            .@"<delete>",
+            .@"<right>",
+            .@"<left>",
+            .@"<down>",
+            .@"<up>",
+            .@"<page_up>",
+            .@"<page_down>",
+            .@"<home>",
+            .@"<end>",
+            .@"<caps_lock>",
+            .@"<scroll_lock>",
+            .@"<num_lock>",
+            .@"<print_screen>",
+            .@"<pause>",
+            .@"<f1>",
+            .@"<f2>",
+            .@"<f3>",
+            .@"<f4>",
+            .@"<f5>",
+            .@"<f6>",
+            .@"<f7>",
+            .@"<f8>",
+            .@"<f9>",
+            .@"<f10>",
+            .@"<f11>",
+            .@"<f12>",
+            .@"<f13>",
+            .@"<f14>",
+            .@"<f15>",
+            .@"<f16>",
+            .@"<f17>",
+            .@"<f18>",
+            .@"<f19>",
+            .@"<f20>",
+            .@"<f21>",
+            .@"<f22>",
+            .@"<f23>",
+            .@"<f24>",
+            .@"<f25>",
+            .menu,
+            => true,
             else => mods & (renderer.KeyMod.control | renderer.KeyMod.alt) != 0,
         };
 
@@ -99,7 +146,7 @@ pub const KeyMap = struct {
         );
         defer self.allocator.free(key_combo);
 
-        var maybe_submap = self.current_submap.trigger(key_combo) catch |err| {
+        var maybe_submap = self.current_submap.trigger(key_combo, user_data) catch |err| {
             self.current_submap = self.root_submap;
             std.log.info("onKey error: {}", .{err});
             return false;
@@ -114,12 +161,12 @@ pub const KeyMap = struct {
         return false;
     }
 
-    pub fn onChar(self: *@This(), codepoint: u32) !bool {
+    pub fn onChar(self: *@This(), codepoint: u32, user_data: ?*c_void) !bool {
         var bytes = [_]u8{0} ** 4;
         const byte_count = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
         const key_name = bytes[0..byte_count];
 
-        var maybe_submap = self.current_submap.trigger(key_name) catch |err| {
+        var maybe_submap = self.current_submap.trigger(key_name, user_data) catch |err| {
             self.current_submap = self.root_submap;
             std.log.info("onChar error: {}", .{err});
             return false;

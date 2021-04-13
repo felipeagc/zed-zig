@@ -63,11 +63,15 @@ pub const Buffer = struct {
         return new_buffer;
     }
 
+    pub fn getLineCount(self: *@This()) usize {
+        return self.lines.items.len;
+    }
+
     pub fn getLine(self: *@This(), index: usize) ![]const u8 {
         if (index >= self.lines.items.len) {
             return error.BufferLineOutOfBounds;
         }
-        return self.lines.items[index];
+        return self.lines.items[index].content.items;
     }
 
     pub fn deinit(self: *@This()) void {

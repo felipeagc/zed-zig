@@ -154,7 +154,7 @@ const Glyph = struct {
     advance: i32,
 };
 
-const MAX_FONT_SIZE = 128;
+pub const MAX_FONT_SIZE = 128;
 const MAX_CODEPOINT = 256;
 
 const FontAtlas = struct {
@@ -175,7 +175,7 @@ const FontAtlas = struct {
 pub const Font = struct {
     data: []u8,
     face: c.FT_Face,
-    atlases: [MAX_FONT_SIZE]?*FontAtlas = [_]?*FontAtlas{null} ** MAX_FONT_SIZE,
+    atlases: [MAX_FONT_SIZE + 1]?*FontAtlas = [_]?*FontAtlas{null} ** (MAX_FONT_SIZE + 1),
 
     pub fn init(base_font_name: []const u8, style: []const u8) !*Font {
         const full_font_name = try mem.concat(
@@ -260,7 +260,7 @@ pub const Font = struct {
         return error.FontConfigFailedToGetPath;
     }
 
-    pub fn getAtlas(self: *@This(), font_size: i32) !*FontAtlas {
+    pub fn getAtlas(self: *@This(), font_size: u32) !*FontAtlas {
         std.debug.assert(font_size <= MAX_FONT_SIZE);
 
         if (self.atlases[@intCast(usize, font_size)]) |atlas| return atlas;
@@ -744,10 +744,10 @@ pub fn drawCodepoint(
     x: i32,
     y: i32,
 ) !i32 {
-    const atlas = try font.getAtlas(@intCast(i32, font_size));
+    const atlas = try font.getAtlas(font_size);
     const glyph = atlas.getGlyph(codepoint);
 
-    const max_ascender = font.getCharMaxAscender(@intCast(i32, font_size));
+    const max_ascender = font.getCharMaxAscender(font_size);
 
     switch (codepoint) {
         '\t' | '\n' | '\r' => {},
@@ -787,7 +787,7 @@ pub fn drawText(
 ) !i32 {
     var advance: i32 = 0;
 
-    const atlas = try font.getAtlas(@intCast(i32, font_size));
+    const atlas = try font.getAtlas(font_size);
 
     const max_ascender = font.getCharMaxAscender(font_size);
 
