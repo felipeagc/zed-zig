@@ -17,7 +17,7 @@ pub fn main() anyerror!void {
         \\hello world
         \\second line
         \\
-        \\olá mundo -- em português
+        \\	olá mundo -- em português
         );
 
     try buffer.insert("yo\n", 1, 0);

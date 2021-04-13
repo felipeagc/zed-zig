@@ -93,6 +93,7 @@ pub const BufferPanel = struct {
             std.math.max(1, cursor_line_length) - 1,
         );
 
+        // Draw cursor
         {
             var cursor_x: i32 = 0;
             const cursor_y = rect.y - @floatToInt(
@@ -112,7 +113,11 @@ pub const BufferPanel = struct {
                     break;
                 }
 
-                cursor_x += try font.getCharAdvance(font_size, codepoint);
+                var char_advance = try font.getCharAdvance(font_size, codepoint);
+                if (codepoint == '\t') {
+                    char_advance *= @intCast(i32, options.tab_width);
+                }
+                cursor_x += char_advance;
                 i += 1;
             }
 
@@ -124,14 +129,19 @@ pub const BufferPanel = struct {
                 .y = cursor_y,
             });
 
-            renderer.setColor(editor.getFace("background").color);
-            _ = try renderer.drawCodepoint(
-                cursor_codepoint,
-                font,
-                font_size,
-                cursor_x,
-                cursor_y,
-            );
+            switch (cursor_codepoint) {
+                '\t', '\n', '\r' => {},
+                else => {
+                    renderer.setColor(editor.getFace("background").color);
+                    _ = try renderer.drawCodepoint(
+                        cursor_codepoint,
+                        font,
+                        font_size,
+                        cursor_x,
+                        cursor_y,
+                    );
+                },
+            }
         }
     }
 
