@@ -353,6 +353,16 @@ pub const BufferPanel = struct {
         }
     }
 
+    fn normalMoveToTop(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.cursor.line = 0;
+    }
+
+    fn normalMoveToBottom(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.cursor.line = self.buffer.getLineCount() - 1;
+    }
+
     fn normalModeDeleteChar(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
@@ -794,6 +804,8 @@ pub const BufferPanel = struct {
             try key_map.bind("<right>", normalMoveRight);
             try key_map.bind("<down>", normalMoveDown);
             try key_map.bind("<up>", normalMoveUp);
+            try key_map.bind("g g", normalMoveToTop);
+            try key_map.bind("G", normalMoveToBottom);
         }
 
         try normal_key_map.bind("w", moveToNextWordStart);
