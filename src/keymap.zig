@@ -1,12 +1,13 @@
 const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
+const editor = @import("editor.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Action = fn (count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void;
+pub const Command = fn(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void;
 
 pub const Binding = union(enum) {
     submap: *SubMap,
-    action: Action,
+    command: Command,
 };
 
 pub const SubMap = struct {
@@ -34,14 +35,14 @@ pub const SubMap = struct {
         self.allocator.destroy(self);
     }
 
-    fn trigger(self: *@This(), key: []const u8, user_data: ?*c_void) !?*SubMap {
+    fn trigger(self: *@This(), key: []const u8, panel: *editor.Panel) !?*SubMap {
         if (self.map.get(key)) |binding| {
             switch (binding) {
                 .submap => |submap| {
                     return submap;
                 },
-                .action => |action| {
-                    try action(null, null, user_data);
+                .command => |command| {
+                    try command(panel, "", 1);
                     return null;
                 },
             }
@@ -74,7 +75,7 @@ pub const KeyMap = struct {
         self: *@This(),
         key: renderer.Key,
         mods: u32,
-        user_data: ?*c_void,
+        panel: *editor.Panel,
     ) !bool {
         const valid_key = switch (key) {
             .@"<space>",
@@ -146,7 +147,7 @@ pub const KeyMap = struct {
         );
         defer self.allocator.free(key_combo);
 
-        var maybe_submap = self.current_submap.trigger(key_combo, user_data) catch |err| {
+        var maybe_submap = self.current_submap.trigger(key_combo, panel) catch |err| {
             self.current_submap = self.root_submap;
             std.log.info("onKey error: {}", .{err});
             return false;
@@ -161,12 +162,12 @@ pub const KeyMap = struct {
         return false;
     }
 
-    pub fn onChar(self: *@This(), codepoint: u32, user_data: ?*c_void) !bool {
+    pub fn onChar(self: *@This(), codepoint: u32, panel: *editor.Panel) !bool {
         var bytes = [_]u8{0} ** 4;
         const byte_count = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
         const key_name = bytes[0..byte_count];
 
-        var maybe_submap = self.current_submap.trigger(key_name, user_data) catch |err| {
+        var maybe_submap = self.current_submap.trigger(key_name, panel) catch |err| {
             self.current_submap = self.root_submap;
             std.log.info("onChar error: {}", .{err});
             return false;
@@ -181,7 +182,7 @@ pub const KeyMap = struct {
         return false;
     }
 
-    pub fn bind(self: *@This(), sequence: []const u8, action: Action) !void {
+    pub fn bind(self: *@This(), sequence: []const u8, command: Command) !void {
         var submap = self.root_submap;
 
         var split_iter = std.mem.split(sequence, " ");
@@ -192,15 +193,15 @@ pub const KeyMap = struct {
                 if (is_action) {
                     if (binding == .submap) binding.submap.deinit();
 
-                    try submap.map.put(part, Binding{ .action = action });
-                } else if (binding == .action) {
+                    try submap.map.put(part, Binding{ .command = command });
+                } else if (binding == .command) {
                     try submap.map.put(part, Binding{
                         .submap = try SubMap.init(self.allocator),
                     });
                 }
             } else {
                 if (is_action) {
-                    try submap.map.put(part, Binding{ .action = action });
+                    try submap.map.put(part, Binding{ .command = command });
                 } else {
                     try submap.map.put(part, Binding{
                         .submap = try SubMap.init(self.allocator),

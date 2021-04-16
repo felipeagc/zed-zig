@@ -54,13 +54,14 @@ pub const Panel = struct {
 var g_editor: Editor = undefined;
 
 fn onKey(key: renderer.Key, mods: u32) void {
-    const got_binding = g_editor.global_keymap.onKey(key, mods, null) catch |err| blk: {
+    var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
+
+    const got_binding = g_editor.global_keymap.onKey(key, mods, panel) catch |err| blk: {
         std.log.info("onKey error: {}", .{err});
         break :blk false;
     };
 
     if (!got_binding) {
-        var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
         if (panel.vt.on_key) |panel_on_key| {
             panel_on_key(panel, key, mods) catch |err| {
                 std.log.info("onKey error: {}", .{err});
@@ -70,13 +71,14 @@ fn onKey(key: renderer.Key, mods: u32) void {
 }
 
 fn onChar(codepoint: u32) void {
-    const got_binding = g_editor.global_keymap.onChar(codepoint, null) catch |err| blk: {
+    var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
+
+    const got_binding = g_editor.global_keymap.onChar(codepoint, panel) catch |err| blk: {
         std.log.info("onChar error: {}", .{err});
         break :blk false;
     };
 
     if (!got_binding) {
-        var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
         if (panel.vt.on_char) |panel_on_char| {
             panel_on_char(panel, codepoint) catch |err| {
                 std.log.info("onChar error: {}", .{err});
@@ -131,7 +133,7 @@ pub fn init(allocator: *Allocator) !void {
     try registerPanelVT(&@import("buffer_panel.zig").VT);
 
     try g_editor.global_keymap.bind("C-=", struct {
-        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
             g_editor.options.main_font_size +%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -142,7 +144,7 @@ pub fn init(allocator: *Allocator) !void {
     }.callback);
 
     try g_editor.global_keymap.bind("C--", struct {
-        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
             g_editor.options.main_font_size -%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -153,14 +155,14 @@ pub fn init(allocator: *Allocator) !void {
     }.callback);
 
     try g_editor.global_keymap.bind("C-j", struct {
-        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
             g_editor.selected_panel +%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
     }.callback);
 
     try g_editor.global_keymap.bind("C-k", struct {
-        fn callback(count: ?i32, object: ?u32, user_data: ?*c_void) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
             g_editor.selected_panel -%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
@@ -311,7 +313,9 @@ pub fn draw() !void {
             try renderer.setScissor(inner_rect);
             renderer.setColor(getFace("background").color);
             try renderer.drawRect(inner_rect);
-            try panel.vt.draw(panel, inner_rect);
+            panel.vt.draw(panel, inner_rect) catch |err| {
+                std.log.warn("Panel draw error: {}", .{err});
+            };
         }
 
         px += pw;
