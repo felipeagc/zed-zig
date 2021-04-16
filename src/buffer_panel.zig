@@ -14,6 +14,81 @@ const Mode = enum {
     visual_line,
 };
 
+const CharClass = enum {
+    whitespace,
+    alphanum,
+    other,
+};
+
+fn codepointToCharClass(codepoint: u32) CharClass {
+    return if (codepoint > 0x07f)
+        CharClass.alphanum
+    else switch (codepoint) {
+        'a'...'z' => CharClass.alphanum,
+        'A'...'Z' => CharClass.alphanum,
+        '0'...'1' => CharClass.alphanum,
+        '_' => CharClass.alphanum,
+        ' ', '\n', '\r', '\t' => CharClass.whitespace,
+        else => CharClass.other,
+    };
+}
+
+const WordIterator = struct {
+    text: []const u8,
+    pos: usize = 0,
+    codepoint_pos: usize = 0,
+
+    const Word = struct {
+        text: []const u8,
+        codepoint_start_pos: usize,
+        codepoint_length: usize,
+        class: CharClass,
+    };
+
+    fn init(text: []const u8) !WordIterator {
+        return WordIterator{
+            .text = text,
+        };
+    }
+
+    fn nextWord(self: *WordIterator) ?Word {
+        if (self.pos >= self.text.len) return null;
+
+        const start_pos = self.pos;
+        const codepoint_start_pos = self.codepoint_pos;
+
+        var codepoint_length: usize = 0;
+        var byte_length: usize = 0;
+        var char_class: CharClass = undefined;
+
+        var iter = std.unicode.Utf8Iterator{
+            .bytes = self.text[self.pos..],
+            .i = 0,
+        };
+        while (iter.nextCodepointSlice()) |codepoint_slice| {
+            const codepoint = std.unicode.utf8Decode(codepoint_slice) catch unreachable;
+            const current_char_class = codepointToCharClass(codepoint);
+            if (codepoint_length == 0) char_class = current_char_class;
+
+            if (char_class != current_char_class) {
+                break;
+            }
+
+            codepoint_length += 1;
+            byte_length += codepoint_slice.len;
+        }
+
+        self.pos += byte_length;
+        self.codepoint_pos += codepoint_length;
+        return Word{
+            .text = self.text[start_pos..self.pos],
+            .codepoint_start_pos = codepoint_start_pos,
+            .codepoint_length = codepoint_length,
+            .class = char_class,
+        };
+    }
+};
+
 var normal_key_map: KeyMap = undefined;
 var insert_key_map: KeyMap = undefined;
 var visual_key_map: KeyMap = undefined;
@@ -602,6 +677,103 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn getNextWordStart(self: *BufferPanel, cursor: Position, out_line: *usize) !?WordIterator.Word {
+        var line_index: usize = cursor.line;
+        while (line_index < self.buffer.getLineCount()) : (line_index += 1) {
+            const line = try self.buffer.getLine(line_index);
+
+            var iter = try WordIterator.init(line);
+            while (iter.nextWord()) |word| {
+                if ((line_index != cursor.line or word.codepoint_start_pos > cursor.column) and word.class != .whitespace) {
+                    out_line.* = line_index;
+                    return word;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    fn getNextWordEnd(self: *BufferPanel, cursor: Position, out_line: *usize) !?WordIterator.Word {
+        var line_index: usize = cursor.line;
+        while (line_index < self.buffer.getLineCount()) : (line_index += 1) {
+            const line = try self.buffer.getLine(line_index);
+
+            var iter = try WordIterator.init(line);
+            while (iter.nextWord()) |word| {
+                if ((line_index != cursor.line or (word.codepoint_start_pos + word.codepoint_length - 1) > cursor.column) and word.class != .whitespace) {
+                    out_line.* = line_index;
+                    return word;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    fn getPrevWordStart(self: *BufferPanel, cursor: Position, out_line: *usize) !?WordIterator.Word {
+        var maybe_word: ?WordIterator.Word = null;
+        var first_line_index = cursor.line;
+        var line_index: isize = @intCast(isize, cursor.line);
+        while (line_index >= 0) : (line_index -= 1) {
+            const line = try self.buffer.getLine(@intCast(usize, line_index));
+
+            var iter = try WordIterator.init(line);
+            while (iter.nextWord()) |word| {
+                if ((line_index < first_line_index or word.codepoint_start_pos < cursor.column) and word.class != .whitespace) {
+                    out_line.* = @intCast(usize, line_index);
+                    maybe_word = word;
+                }
+            }
+
+            if (maybe_word != null) {
+                return maybe_word;
+            }
+        }
+
+        return null;
+    }
+
+    fn moveToNextWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var cursor = try self.getFixedCursorPos();
+        var line: usize = cursor.line;
+        if (try self.getNextWordStart(cursor, &line)) |word| {
+            self.cursor.line = line;
+            self.cursor.column = word.codepoint_start_pos;
+        } else {
+            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(cursor.line));
+            self.cursor.column = line_length - 1;
+        }
+
+        try self.fixupCursor();
+    }
+
+    fn moveToNextWordEnd(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var cursor = try self.getFixedCursorPos();
+        if (try self.getNextWordEnd(cursor, &cursor.line)) |word| {
+            self.cursor.line = cursor.line;
+            self.cursor.column = word.codepoint_start_pos + word.codepoint_length - 1;
+        }
+
+        try self.fixupCursor();
+    }
+
+    fn moveToPrevWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var cursor = try self.getFixedCursorPos();
+        if (try self.getPrevWordStart(cursor, &cursor.line)) |word| {
+            self.cursor.line = cursor.line;
+            self.cursor.column = word.codepoint_start_pos;
+        }
+
+        try self.fixupCursor();
+    }
+
     fn registerVT(allocator: *Allocator) anyerror!void {
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
@@ -623,6 +795,10 @@ pub const BufferPanel = struct {
             try key_map.bind("<down>", normalMoveDown);
             try key_map.bind("<up>", normalMoveUp);
         }
+
+        try normal_key_map.bind("w", moveToNextWordStart);
+        try normal_key_map.bind("e", moveToNextWordEnd);
+        try normal_key_map.bind("b", moveToPrevWordStart);
 
         try normal_key_map.bind("x", normalModeDeleteChar);
         try normal_key_map.bind("X", normalModeDeleteCharBefore);
