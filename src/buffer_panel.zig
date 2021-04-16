@@ -4,17 +4,20 @@ const editor = @import("editor.zig");
 const Buffer = @import("buffer.zig").Buffer;
 const KeyMap = @import("keymap.zig").KeyMap;
 const util = @import("util.zig");
+const mem = std.mem;
 const Allocator = std.mem.Allocator;
 
 const Mode = enum {
     normal,
     insert,
     visual,
+    visual_line,
 };
 
 var normal_key_map: KeyMap = undefined;
 var insert_key_map: KeyMap = undefined;
 var visual_key_map: KeyMap = undefined;
+var visual_line_key_map: KeyMap = undefined;
 
 pub const VT = editor.PanelVT{
     .name = "buffer",
@@ -31,13 +34,18 @@ pub const VT = editor.PanelVT{
     .unregister_vt = BufferPanel.unregisterVT,
 };
 
+const Position = struct {
+    line: usize = 0,
+    column: usize = 0,
+};
+
 pub const BufferPanel = struct {
     panel: editor.Panel = .{ .vt = &VT },
     allocator: *Allocator,
     buffer: *Buffer,
     mode: Mode = .normal,
-    cursor_line: usize = 0,
-    cursor_column: usize = 0,
+    cursor: Position = .{},
+    mark: Position = .{},
     scroll_x: util.Animation(f64) = .{},
     scroll_y: util.Animation(f64) = .{},
 
@@ -50,8 +58,39 @@ pub const BufferPanel = struct {
         return &self.panel;
     }
 
+    fn getFixedCursorPos(self: *BufferPanel) !Position {
+        const max_col = try self.getModeMaxCol();
+        const column = std.math.clamp(self.cursor.column, 0, max_col);
+
+        return Position{
+            .line = self.cursor.line,
+            .column = column,
+        };
+    }
+
+    fn fixupCursor(self: *BufferPanel) !void {
+        self.cursor = try self.getFixedCursorPos();
+    }
+
     fn getStatusLine(panel: *editor.Panel, allocator: *Allocator) anyerror![]const u8 {
-        return try allocator.dupe(u8, "** unnamed buffer **");
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const buffer_name = "** unnamed buffer **";
+
+        const cursor_pos = try self.getFixedCursorPos();
+        const mode_name = switch (self.mode) {
+            .normal => "[N]",
+            .insert => "[I]",
+            .visual => "[V]",
+            .visual_line => "[V]",
+        };
+
+        return try std.fmt.allocPrint(allocator, "{s} {s} L#{} C#{}", .{
+            mode_name,
+            buffer_name,
+            cursor_pos.line,
+            cursor_pos.column,
+        });
     }
 
     fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
@@ -93,11 +132,11 @@ pub const BufferPanel = struct {
             );
         }
 
-        const cursor_line = self.cursor_line;
+        const cursor_line = self.cursor.line;
         const cursor_line_content = try self.buffer.getLine(cursor_line);
         const cursor_line_length = try std.unicode.utf8CountCodepoints(cursor_line_content);
         const cursor_column = std.math.clamp(
-            self.cursor_column,
+            self.cursor.column,
             0,
             try self.getModeMaxCol(),
         );
@@ -165,6 +204,7 @@ pub const BufferPanel = struct {
             .normal => normal_key_map,
             .insert => insert_key_map,
             .visual => visual_key_map,
+            .visual_line => visual_line_key_map,
         };
 
         _ = try map.onKey(key, mods, panel);
@@ -180,11 +220,14 @@ pub const BufferPanel = struct {
             .visual => {
                 _ = try visual_key_map.onChar(codepoint, panel);
             },
+            .visual_line => {
+                _ = try visual_line_key_map.onChar(codepoint, panel);
+            },
             .insert => {
                 var buf = [4]u8{ 0, 0, 0, 0 };
                 const len = try std.unicode.utf8Encode(@intCast(u21, codepoint), &buf);
-                try self.buffer.insert(buf[0..len], self.cursor_line, self.cursor_column);
-                self.cursor_column += 1;
+                try self.buffer.insert(buf[0..len], self.cursor.line, self.cursor.column);
+                self.cursor.column += 1;
 
                 try self.fixupCursor();
             },
@@ -200,8 +243,8 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
-        if (self.cursor_column > 0) {
-            self.cursor_column -= 1;
+        if (self.cursor.column > 0) {
+            self.cursor.column -= 1;
         }
 
         try self.fixupCursor();
@@ -212,10 +255,10 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
-        const line = try self.buffer.getLine(self.cursor_line);
+        const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
-        if ((self.cursor_column + 1) < line_length) {
-            self.cursor_column += 1;
+        if ((self.cursor.column + 1) < line_length) {
+            self.cursor.column += 1;
         }
 
         try self.fixupCursor();
@@ -223,15 +266,15 @@ pub const BufferPanel = struct {
 
     fn normalMoveUp(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        if (self.cursor_line > 0) {
-            self.cursor_line -= 1;
+        if (self.cursor.line > 0) {
+            self.cursor.line -= 1;
         }
     }
 
     fn normalMoveDown(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        if ((self.cursor_line + 1) < self.buffer.getLineCount()) {
-            self.cursor_line += 1;
+        if ((self.cursor.line + 1) < self.buffer.getLineCount()) {
+            self.cursor.line += 1;
         }
     }
 
@@ -240,7 +283,11 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
-        try self.buffer.delete(self.cursor_line, self.cursor_column, 1);
+        const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column, 1);
+        defer self.allocator.free(content);
+        try renderer.setClipboardString(content);
+
+        try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
     }
 
     fn normalModeDeleteCharBefore(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
@@ -248,9 +295,13 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
-        if (self.cursor_column > 0) {
-            try self.buffer.delete(self.cursor_line, self.cursor_column - 1, 1);
-            self.cursor_column -= 1;
+        if (self.cursor.column > 0) {
+            const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column - 1, 1);
+            defer self.allocator.free(content);
+            try renderer.setClipboardString(content);
+            try self.buffer.delete(self.cursor.line, self.cursor.column - 1, 1);
+
+            self.cursor.column -= 1;
 
             try self.fixupCursor();
         }
@@ -259,39 +310,52 @@ pub const BufferPanel = struct {
     fn normalModeDeleteLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        const line = try self.buffer.getLine(self.cursor_line);
+        const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
-        if (self.cursor_line == 0) {
-            try self.buffer.delete(self.cursor_line, 0, line_length + 1);
+        const content = try self.buffer.getContent(self.allocator, self.cursor.line, 0, line_length + 1);
+        defer self.allocator.free(content);
+
+        if (self.cursor.line == 0) {
+            try self.buffer.delete(self.cursor.line, 0, line_length + 1);
         } else {
-            const prev_line = try self.buffer.getLine(self.cursor_line - 1);
+            const prev_line = try self.buffer.getLine(self.cursor.line - 1);
             const prev_line_length = try std.unicode.utf8CountCodepoints(prev_line);
-            try self.buffer.delete(self.cursor_line - 1, prev_line_length, line_length + 1);
+            try self.buffer.delete(self.cursor.line - 1, prev_line_length, line_length + 1);
         }
+
+        try renderer.setClipboardString(content);
 
         const line_count = self.buffer.getLineCount();
         const max_line = if (line_count > 0) (line_count - 1) else 0;
-        self.cursor_line = std.math.clamp(self.cursor_line, 0, max_line);
+        self.cursor.line = std.math.clamp(self.cursor.line, 0, max_line);
     }
 
     fn normalModeJoinLines(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        const line = try self.buffer.getLine(self.cursor_line);
+        const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
-        try self.buffer.delete(self.cursor_line, line_length, 1); // delete newline
-        try self.buffer.insert(" ", self.cursor_line, line_length); // insert space
+        try self.buffer.delete(self.cursor.line, line_length, 1); // delete newline
+        try self.buffer.insert(" ", self.cursor.line, line_length); // insert space
 
-        self.cursor_column = line_length;
+        self.cursor.column = line_length;
         try self.fixupCursor();
     }
 
-    fn enterInsertMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterInsertModeBefore(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
+        try self.fixupCursor();
+    }
+
+    fn enterInsertModeAfter(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.mode = .insert;
+
+        self.cursor.column += 1;
         try self.fixupCursor();
     }
 
@@ -299,7 +363,7 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
-        self.cursor_column = try self.getModeMaxCol();
+        self.cursor.column = try self.getModeMaxCol();
         try self.fixupCursor();
     }
 
@@ -307,31 +371,31 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
-        self.cursor_column = 0;
+        self.cursor.column = 0;
         try self.fixupCursor();
     }
 
     fn enterInsertModeNextLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        const line = try self.buffer.getLine(self.cursor_line);
+        const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
-        try self.buffer.insert("\n", self.cursor_line, line_length);
+        try self.buffer.insert("\n", self.cursor.line, line_length);
 
         self.mode = .insert;
-        self.cursor_column = 0;
-        self.cursor_line += 1;
+        self.cursor.column = 0;
+        self.cursor.line += 1;
         try self.fixupCursor();
     }
 
     fn enterInsertModePrevLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        try self.buffer.insert("\n", self.cursor_line, 0);
+        try self.buffer.insert("\n", self.cursor.line, 0);
 
         self.mode = .insert;
-        self.cursor_column = 0;
+        self.cursor.column = 0;
         try self.fixupCursor();
     }
 
@@ -339,22 +403,23 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .normal;
 
+        if (self.cursor.column > 0) {
+            self.cursor.column -= 1;
+        }
         try self.fixupCursor();
     }
 
     fn getModeMaxCol(self: *BufferPanel) !usize {
-        const line = try self.buffer.getLine(self.cursor_line);
+        const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
         return switch (self.mode) {
             .insert => line_length,
-            .normal, .visual => if (line_length > 0) (line_length - 1) else 0,
+            .normal,
+            .visual,
+            .visual_line,
+            => if (line_length > 0) (line_length - 1) else 0,
         };
-    }
-
-    fn fixupCursor(self: *BufferPanel) !void {
-        const max_col = try self.getModeMaxCol();
-        self.cursor_column = std.math.clamp(self.cursor_column, 0, max_col);
     }
 
     fn insertModeMoveRight(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
@@ -363,12 +428,12 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
 
         const line_count = self.buffer.getLineCount();
-        const line = try self.buffer.getLine(self.cursor_line);
+        const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
-        self.cursor_column += 1;
-        if (self.cursor_column > line_length and (self.cursor_line + 1) < line_count) {
-            self.cursor_column = 0;
-            self.cursor_line += 1;
+        self.cursor.column += 1;
+        if (self.cursor.column > line_length and (self.cursor.line + 1) < line_count) {
+            self.cursor.column = 0;
+            self.cursor.line += 1;
         }
 
         try self.fixupCursor();
@@ -379,15 +444,15 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
-        if (self.cursor_column == 0) {
-            if (self.cursor_line > 0) {
-                self.cursor_line -= 1;
-                const line = try self.buffer.getLine(self.cursor_line);
+        if (self.cursor.column == 0) {
+            if (self.cursor.line > 0) {
+                self.cursor.line -= 1;
+                const line = try self.buffer.getLine(self.cursor.line);
                 const line_length = try std.unicode.utf8CountCodepoints(line);
-                self.cursor_column = line_length;
+                self.cursor.column = line_length;
             }
         } else {
-            self.cursor_column -= 1;
+            self.cursor.column -= 1;
         }
 
         try self.fixupCursor();
@@ -396,31 +461,63 @@ pub const BufferPanel = struct {
     fn insertModeMoveUp(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        if (self.cursor_line > 0) {
-            self.cursor_line -= 1;
+        if (self.cursor.line > 0) {
+            self.cursor.line -= 1;
         }
     }
 
     fn insertModeMoveDown(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        if ((self.cursor_line + 1) < self.buffer.getLineCount()) {
-            self.cursor_line += 1;
+        if ((self.cursor.line + 1) < self.buffer.getLineCount()) {
+            self.cursor.line += 1;
         }
     }
 
     fn insertModeBackspace(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        if (!(self.cursor_column == 0 and self.cursor_line == 0)) {
+        if (!(self.cursor.column == 0 and self.cursor.line == 0)) {
             try insertModeMoveLeft(panel, &[_]u8{}, 1);
-            try self.buffer.delete(self.cursor_line, self.cursor_column, 1);
+            const first_content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column, 1);
+            defer self.allocator.free(first_content);
+            try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
+
+            if (mem.eql(u8, first_content, " ")) {
+                while (self.cursor.column > 0 and self.cursor.column % editor.getOptions().tab_width != 0) {
+                    const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column - 1, 1);
+                    defer self.allocator.free(content);
+                    if (!mem.eql(u8, content, " ")) {
+                        break;
+                    }
+
+                    try insertModeMoveLeft(panel, &[_]u8{}, 1);
+                    try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
+                }
+            }
         }
     }
 
     fn insertModeInsertNewLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        try self.buffer.insert("\n", self.cursor_line, self.cursor_column);
+        try self.buffer.insert("\n", self.cursor.line, self.cursor.column);
         try insertModeMoveRight(panel, &[_]u8{}, 1);
+    }
+
+    fn insertModeInsertTab(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        if (editor.getOptions().expandtab) {
+            const tab_width = editor.getOptions().tab_width;
+            const spaces = tab_width - (@intCast(u32, self.cursor.column) % 4);
+
+            var i: u32 = 0;
+            while (i < spaces) : (i += 1) {
+                try self.buffer.insert(" ", self.cursor.line, self.cursor.column);
+                try insertModeMoveRight(panel, &[_]u8{}, 1);
+            }
+        } else {
+            try self.buffer.insert("\t", self.cursor.line, self.cursor.column);
+            try insertModeMoveRight(panel, &[_]u8{}, 1);
+        }
     }
 
     fn pasteAfter(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
@@ -433,15 +530,15 @@ pub const BufferPanel = struct {
         if (content_codepoint_count == 0) return;
 
         if (clipboard_content[clipboard_content.len - 1] == '\n') {
-            const line = try self.buffer.getLine(self.cursor_line);
+            const line = try self.buffer.getLine(self.cursor.line);
             const line_length = try std.unicode.utf8CountCodepoints(line);
-            try self.buffer.insert("\n", self.cursor_line, line_length);
-            try self.buffer.insert(clipboard_content[0 .. clipboard_content.len - 1], self.cursor_line + 1, 0);
-            self.cursor_line += 1;
-            self.cursor_column = 0;
+            try self.buffer.insert("\n", self.cursor.line, line_length);
+            try self.buffer.insert(clipboard_content[0 .. clipboard_content.len - 1], self.cursor.line + 1, 0);
+            self.cursor.line += 1;
+            self.cursor.column = 0;
         } else {
-            try self.buffer.insert(clipboard_content, self.cursor_line, self.cursor_column + 1);
-            self.cursor_column += content_codepoint_count;
+            try self.buffer.insert(clipboard_content, self.cursor.line, self.cursor.column + 1);
+            self.cursor.column += content_codepoint_count;
         }
 
         try self.fixupCursor();
@@ -456,13 +553,52 @@ pub const BufferPanel = struct {
         if (content_codepoint_count == 0) return;
 
         if (clipboard_content[clipboard_content.len - 1] == '\n') {
-            try self.buffer.insert(clipboard_content, self.cursor_line, 0);
-            self.cursor_column = 0;
+            try self.buffer.insert(clipboard_content, self.cursor.line, 0);
+            self.cursor.column = 0;
         } else {
-            try self.buffer.insert(clipboard_content, self.cursor_line, self.cursor_column);
-            self.cursor_column += (content_codepoint_count - 1);
+            try self.buffer.insert(clipboard_content, self.cursor.line, self.cursor.column);
+            self.cursor.column += (content_codepoint_count - 1);
         }
 
+        try self.fixupCursor();
+    }
+
+    fn yankLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const line = try self.buffer.getLine(self.cursor.line);
+        const line_length = try std.unicode.utf8CountCodepoints(line);
+        const content = try self.buffer.getContent(self.allocator, self.cursor.line, 0, line_length + 1);
+        defer self.allocator.free(content);
+
+        try renderer.setClipboardString(content);
+    }
+
+    fn enterVisualMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.mode = .visual;
+        try self.fixupCursor();
+
+        self.mark = self.cursor;
+    }
+
+    fn enterVisualLineMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.mode = .visual_line;
+        try self.fixupCursor();
+
+        self.mark = self.cursor;
+    }
+
+    fn exitVisualMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.mode = .normal;
+        try self.fixupCursor();
+    }
+
+    fn exitVisualLineMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.mode = .normal;
         try self.fixupCursor();
     }
 
@@ -470,27 +606,39 @@ pub const BufferPanel = struct {
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
         visual_key_map = try KeyMap.init(allocator);
+        visual_line_key_map = try KeyMap.init(allocator);
 
-        try normal_key_map.bind("h", normalMoveLeft);
-        try normal_key_map.bind("l", normalMoveRight);
-        try normal_key_map.bind("j", normalMoveDown);
-        try normal_key_map.bind("k", normalMoveUp);
-        try normal_key_map.bind("<left>", normalMoveLeft);
-        try normal_key_map.bind("<right>", normalMoveRight);
-        try normal_key_map.bind("<down>", normalMoveDown);
-        try normal_key_map.bind("<up>", normalMoveUp);
+        const normal_key_maps = [_]*KeyMap{
+            &normal_key_map,
+            &visual_key_map,
+            &visual_line_key_map,
+        };
+        inline for (normal_key_maps) |key_map| {
+            try key_map.bind("h", normalMoveLeft);
+            try key_map.bind("l", normalMoveRight);
+            try key_map.bind("j", normalMoveDown);
+            try key_map.bind("k", normalMoveUp);
+            try key_map.bind("<left>", normalMoveLeft);
+            try key_map.bind("<right>", normalMoveRight);
+            try key_map.bind("<down>", normalMoveDown);
+            try key_map.bind("<up>", normalMoveUp);
+        }
 
         try normal_key_map.bind("x", normalModeDeleteChar);
         try normal_key_map.bind("X", normalModeDeleteCharBefore);
         try normal_key_map.bind("d d", normalModeDeleteLine);
         try normal_key_map.bind("J", normalModeJoinLines);
-        try normal_key_map.bind("i", enterInsertMode);
+        try normal_key_map.bind("i", enterInsertModeBefore);
         try normal_key_map.bind("I", enterInsertModeBeginningOfLine);
+        try normal_key_map.bind("a", enterInsertModeAfter);
         try normal_key_map.bind("A", enterInsertModeEndOfLine);
         try normal_key_map.bind("o", enterInsertModeNextLine);
         try normal_key_map.bind("O", enterInsertModePrevLine);
         try normal_key_map.bind("p", pasteAfter);
         try normal_key_map.bind("P", pasteBefore);
+        try normal_key_map.bind("y y", yankLine);
+        try normal_key_map.bind("v", enterVisualMode);
+        try normal_key_map.bind("V", enterVisualLineMode);
 
         try insert_key_map.bind("<esc>", exitInsertMode);
         try insert_key_map.bind("<left>", insertModeMoveLeft);
@@ -499,9 +647,15 @@ pub const BufferPanel = struct {
         try insert_key_map.bind("<down>", insertModeMoveDown);
         try insert_key_map.bind("<backspace>", insertModeBackspace);
         try insert_key_map.bind("<enter>", insertModeInsertNewLine);
+        try insert_key_map.bind("<tab>", insertModeInsertTab);
+
+        try visual_key_map.bind("<esc>", exitVisualMode);
+
+        try visual_line_key_map.bind("<esc>", exitVisualLineMode);
     }
 
     fn unregisterVT() void {
+        visual_line_key_map.deinit();
         visual_key_map.deinit();
         insert_key_map.deinit();
         normal_key_map.deinit();

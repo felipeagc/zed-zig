@@ -7,6 +7,7 @@ pub const EditorOptions = struct {
     main_font: *renderer.Font,
     main_font_size: u32 = 18,
     tab_width: u32 = 4,
+    expandtab: bool = true,
     scroll_margin: u32 = 5,
     status_line_padding: u32 = 4,
     border_size: u32 = 1,
@@ -105,6 +106,7 @@ pub fn init(allocator: *Allocator) !void {
 
     g_editor = Editor{
         .allocator = allocator,
+
         .options = .{
             .main_font = try renderer.Font.init("Cascadia Code", "regular"),
         },
