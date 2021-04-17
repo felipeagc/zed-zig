@@ -379,6 +379,18 @@ pub const BufferPanel = struct {
         self.cursor.line = self.buffer.getLineCount() - 1;
     }
 
+    fn normalMoveToLineStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.cursor.column = 0;
+    }
+
+    fn normalMoveToLineEnd(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        const line = try self.buffer.getLine(self.cursor.line);
+        const line_length = try std.unicode.utf8CountCodepoints(line);
+        self.cursor.column = line_length - 1;
+    }
+
     fn normalModeDeleteChar(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
@@ -958,6 +970,8 @@ pub const BufferPanel = struct {
             try key_map.bind("<up>", normalMoveUp);
             try key_map.bind("g g", normalMoveToTop);
             try key_map.bind("G", normalMoveToBottom);
+            try key_map.bind("0", normalMoveToLineStart);
+            try key_map.bind("$", normalMoveToLineEnd);
             try key_map.bind("w", moveToNextWordStart);
             try key_map.bind("e", moveToNextWordEnd);
             try key_map.bind("b", moveToPrevWordStart);
