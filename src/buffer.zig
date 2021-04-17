@@ -581,6 +581,40 @@ pub const Buffer = struct {
             },
         });
     }
+
+    pub fn getCodepointDistance(
+        self: *@This(),
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+    ) !usize {
+        if (end_line < start_line) return error.GetCodepointDistanceInvalidEndLine;
+        if (end_line == start_line and end_column < start_column) return error.GetCodepointDistanceInvalidEndColumn;
+        if (end_line == start_line and end_column == start_column) return 0;
+
+        var distance: usize = 0;
+
+        var line_index: usize = start_line;
+        parent: while (line_index <= end_line) : (line_index += 1) {
+            const line = try self.getLine(line_index);
+            var iter = (try std.unicode.Utf8View.init(line)).iterator();
+            var column_index: usize = 0;
+            while (iter.nextCodepoint()) |codepoint| {
+                if (line_index > start_line or (line_index == start_line and column_index > start_column)) {
+                    distance += 1;
+                }
+                if (line_index >= end_line and column_index >= end_column) {
+                    break :parent;
+                }
+                column_index += 1;
+            }
+
+            distance += 1; // new line character
+        }
+
+        return distance;
+    }
 };
 
 comptime {
@@ -592,6 +626,9 @@ comptime {
     _ = Buffer.insert;
     _ = Buffer.delete;
     _ = Buffer.print;
+    _ = Buffer.undo;
+    _ = Buffer.redo;
+    _ = Buffer.getCodepointDistance;
 }
 
 test "buffer" {
@@ -726,6 +763,12 @@ test "buffer" {
             \\ worlsnew content
             \\
         ));
+
+        expect((try buffer.getCodepointDistance(0, 0, 0, 0)) == 0);
+        expect((try buffer.getCodepointDistance(0, 0, 0, 1)) == 1);
+        expect((try buffer.getCodepointDistance(0, 0, 0, 2)) == 2);
+        expect((try buffer.getCodepointDistance(0, 0, 1, 0)) == 11);
+        expect((try buffer.getCodepointDistance(0, 0, 2, 0)) == 14);
     }
 
     {

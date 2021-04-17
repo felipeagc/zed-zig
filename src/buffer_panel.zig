@@ -387,6 +387,9 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
+        const line = try self.buffer.getLine(self.cursor.line);
+        if ((try std.unicode.utf8CountCodepoints(line)) == 0) return;
+
         const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column, 1);
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
@@ -816,8 +819,9 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         var cursor = try self.getFixedCursorPos();
-        if (try self.getNextWordEnd(cursor, &cursor.line)) |word| {
-            self.cursor.line = cursor.line;
+        var line: usize = cursor.line;
+        if (try self.getNextWordEnd(cursor, &line)) |word| {
+            self.cursor.line = line;
             self.cursor.column = word.codepoint_start_pos + word.codepoint_length - 1;
         }
 
@@ -828,10 +832,94 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         var cursor = try self.getFixedCursorPos();
-        if (try self.getPrevWordStart(cursor, &cursor.line)) |word| {
-            self.cursor.line = cursor.line;
+        var line: usize = cursor.line;
+        if (try self.getPrevWordStart(cursor, &line)) |word| {
+            self.cursor.line = line;
             self.cursor.column = word.codepoint_start_pos;
         }
+
+        try self.fixupCursor();
+    }
+
+    fn deleteToNextWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        var start_pos = try self.getFixedCursorPos();
+        var end_pos = start_pos;
+
+        var line: usize = start_pos.line;
+        if (try self.getNextWordStart(start_pos, &line)) |word| {
+            end_pos.line = line;
+            end_pos.column = word.codepoint_start_pos;
+        }
+
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
+
+        try self.buffer.delete(start_pos.line, start_pos.column, distance);
+
+        try self.fixupCursor();
+    }
+
+    fn deleteToNextWordEnd(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        var start_pos = try self.getFixedCursorPos();
+        var end_pos = start_pos;
+
+        var line: usize = start_pos.line;
+        if (try self.getNextWordEnd(start_pos, &line)) |word| {
+            end_pos.line = line;
+            end_pos.column = word.codepoint_start_pos + word.codepoint_length;
+        }
+
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
+
+        try self.buffer.delete(start_pos.line, start_pos.column, distance);
+
+        try self.fixupCursor();
+    }
+
+    fn deleteToPrevWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        var end_pos = try self.getFixedCursorPos();
+        var start_pos = end_pos;
+
+        var line: usize = end_pos.line;
+        if (try self.getPrevWordStart(end_pos, &line)) |word| {
+            start_pos.line = line;
+            start_pos.column = word.codepoint_start_pos;
+        }
+
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
+
+        try self.buffer.delete(start_pos.line, start_pos.column, distance);
+
+        self.cursor = start_pos;
 
         try self.fixupCursor();
     }
@@ -870,11 +958,14 @@ pub const BufferPanel = struct {
             try key_map.bind("<up>", normalMoveUp);
             try key_map.bind("g g", normalMoveToTop);
             try key_map.bind("G", normalMoveToBottom);
+            try key_map.bind("w", moveToNextWordStart);
+            try key_map.bind("e", moveToNextWordEnd);
+            try key_map.bind("b", moveToPrevWordStart);
         }
 
-        try normal_key_map.bind("w", moveToNextWordStart);
-        try normal_key_map.bind("e", moveToNextWordEnd);
-        try normal_key_map.bind("b", moveToPrevWordStart);
+        try normal_key_map.bind("d w", deleteToNextWordStart);
+        try normal_key_map.bind("d e", deleteToNextWordEnd);
+        try normal_key_map.bind("d b", deleteToPrevWordStart);
 
         try normal_key_map.bind("x", normalModeDeleteChar);
         try normal_key_map.bind("X", normalModeDeleteCharBefore);
