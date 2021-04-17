@@ -19,15 +19,40 @@ const Line = struct {
     }
 };
 
+const TextOp = union(enum) {
+    insert: struct {
+        line: usize,
+        column: usize,
+        text: []const u8,
+        codepoint_length: usize,
+    },
+    delete: struct {
+        line: usize,
+        column: usize,
+        text: []const u8,
+        codepoint_length: usize,
+    },
+    begin_checkpoint: struct {},
+    end_checkpoint: struct {},
+};
+
+const TextOpOptions = struct {
+    save_history: bool,
+};
+
 pub const Buffer = struct {
     allocator: *Allocator,
     lines: ArrayList(Line),
+    undo_stack: ArrayList(TextOp),
+    redo_stack: ArrayList(TextOp),
 
     pub fn init(allocator: *Allocator) !*Buffer {
         var self = try allocator.create(@This());
         self.* = .{
             .allocator = allocator,
             .lines = ArrayList(Line).init(allocator),
+            .undo_stack = ArrayList(TextOp).init(allocator),
+            .redo_stack = ArrayList(TextOp).init(allocator),
         };
 
         errdefer self.deinit();
@@ -41,7 +66,9 @@ pub const Buffer = struct {
         var self = try Buffer.init(allocator);
         errdefer self.deinit();
 
-        try self.insert(content, 0, 0);
+        try self.insertInternal(content, 0, 0, .{
+            .save_history = false,
+        });
 
         return self;
     }
@@ -78,15 +105,43 @@ pub const Buffer = struct {
         for (self.lines.items) |*line| {
             line.deinit();
         }
+
+        for (self.undo_stack.items) |op| {
+            switch (op) {
+                .insert => {
+                    self.allocator.free(op.insert.text);
+                },
+                .delete => {
+                    self.allocator.free(op.delete.text);
+                },
+                .end_checkpoint, .begin_checkpoint => {},
+            }
+        }
+
+        for (self.redo_stack.items) |op| {
+            switch (op) {
+                .insert => {
+                    self.allocator.free(op.insert.text);
+                },
+                .delete => {
+                    self.allocator.free(op.delete.text);
+                },
+                .end_checkpoint, .begin_checkpoint => {},
+            }
+        }
+
+        self.undo_stack.deinit();
+        self.redo_stack.deinit();
         self.lines.deinit();
         self.allocator.destroy(self);
     }
 
-    pub fn insert(
+    fn insertInternal(
         self: *@This(),
         text: []const u8,
         line_index: usize,
         column_index: usize,
+        comptime options: TextOpOptions,
     ) !void {
         if (text.len == 0) return;
 
@@ -129,18 +184,54 @@ pub const Buffer = struct {
         if (inserted_lines.items.len > 1) {
             try self.lines.insertSlice(actual_line_index + 1, inserted_lines.items[1..]);
         }
+
+        if (options.save_history) {
+            for (self.redo_stack.items) |op| {
+                switch (op) {
+                    .insert => self.allocator.free(op.insert.text),
+                    .delete => self.allocator.free(op.delete.text),
+                    .end_checkpoint, .begin_checkpoint => {},
+                }
+            }
+
+            self.redo_stack.shrinkRetainingCapacity(0);
+
+            try self.undo_stack.append(TextOp{
+                .insert = .{
+                    .line = line_index,
+                    .column = column_index,
+                    .text = try self.allocator.dupe(u8, text),
+                    .codepoint_length = try std.unicode.utf8CountCodepoints(text),
+                },
+            });
+        }
     }
 
-    pub fn delete(
+    pub fn insert(
+        self: *@This(),
+        text: []const u8,
+        line_index: usize,
+        column_index: usize,
+    ) !void {
+        return self.insertInternal(
+            text,
+            line_index,
+            column_index,
+            .{ .save_history = true },
+        );
+    }
+
+    fn deleteInternal(
         self: *@This(),
         line_index: usize,
         column_index: usize,
         codepoint_length: usize,
+        comptime options: TextOpOptions,
     ) !void {
         if (codepoint_length == 0) return;
 
         const result = try self.getContentInternal(
-            null,
+            if (options.save_history) self.allocator else null,
             line_index,
             column_index,
             codepoint_length,
@@ -168,6 +259,40 @@ pub const Buffer = struct {
         );
 
         self.lines.shrinkRetainingCapacity(new_line_count);
+
+        if (options.save_history) {
+            for (self.redo_stack.items) |op| {
+                switch (op) {
+                    .insert => self.allocator.free(op.insert.text),
+                    .delete => self.allocator.free(op.delete.text),
+                    .end_checkpoint, .begin_checkpoint => {},
+                }
+            }
+            self.redo_stack.shrinkRetainingCapacity(0);
+
+            try self.undo_stack.append(TextOp{
+                .delete = .{
+                    .line = line_index,
+                    .column = column_index,
+                    .text = result.content.?,
+                    .codepoint_length = codepoint_length,
+                },
+            });
+        }
+    }
+
+    pub fn delete(
+        self: *@This(),
+        line_index: usize,
+        column_index: usize,
+        codepoint_length: usize,
+    ) !void {
+        return self.deleteInternal(
+            line_index,
+            column_index,
+            codepoint_length,
+            .{ .save_history = true },
+        );
     }
 
     pub fn getEntireContent(self: *@This(), allocator: *Allocator) ![]const u8 {
@@ -353,6 +478,88 @@ pub const Buffer = struct {
         for (self.lines.items) |line| {
             std.debug.print("\t\"{s}\"\n", .{line.content.items});
         }
+    }
+
+    fn undoOp(self: *@This(), op: TextOp) !void {
+        try self.redo_stack.append(op);
+        switch (op) {
+            .insert => {
+                try self.deleteInternal(
+                    op.insert.line,
+                    op.insert.column,
+                    op.insert.codepoint_length,
+                    .{ .save_history = false },
+                );
+            },
+            .delete => {
+                try self.insertInternal(
+                    op.delete.text,
+                    op.delete.line,
+                    op.delete.column,
+                    .{ .save_history = false },
+                );
+            },
+            .begin_checkpoint, .end_checkpoint => {},
+        }
+    }
+
+    pub fn undo(self: *@This()) !void {
+        if (self.undo_stack.popOrNull()) |op| {
+            try self.undoOp(op);
+            if (op != .end_checkpoint) return;
+        }
+
+        while (self.undo_stack.popOrNull()) |op| {
+            try self.undoOp(op);
+            if (op == .begin_checkpoint) return;
+        }
+    }
+
+    fn redoOp(self: *@This(), op: TextOp) !void {
+        try self.undo_stack.append(op);
+        switch (op) {
+            .insert => {
+                try self.insertInternal(
+                    op.insert.text,
+                    op.insert.line,
+                    op.insert.column,
+                    .{ .save_history = false },
+                );
+            },
+            .delete => {
+                try self.deleteInternal(
+                    op.delete.line,
+                    op.delete.column,
+                    op.delete.codepoint_length,
+                    .{ .save_history = false },
+                );
+            },
+            .begin_checkpoint, .end_checkpoint => {},
+        }
+    }
+
+    pub fn redo(self: *@This()) !void {
+        if (self.redo_stack.popOrNull()) |op| {
+            try self.redoOp(op);
+            if (op != .begin_checkpoint) return;
+        }
+
+        while (self.redo_stack.popOrNull()) |op| {
+            try self.redoOp(op);
+            if (op == .end_checkpoint) return;
+        }
+    }
+
+    pub fn beginCheckpoint(self: *@This()) !void {
+        try self.undo_stack.append(TextOp{
+            .begin_checkpoint = .{},
+        });
+    }
+
+    pub fn endCheckpoint(self: *@This()) !void {
+        try self.undo_stack.append(TextOp{
+            .end_checkpoint = .{},
+        });
     }
 };
 

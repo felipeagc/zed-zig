@@ -15,12 +15,12 @@ pub fn main() anyerror!void {
 
     var buffer = try Buffer.initWithContent(allocator, 
         \\hello world
+        \\yo
         \\second line
         \\
         \\	olá mundo -- em português
         );
 
-    try buffer.insert("yo\n", 1, 0);
     // var buffer = try Buffer.init(allocator, "abc");
     defer buffer.deinit();
 

@@ -134,11 +134,15 @@ pub const BufferPanel = struct {
     }
 
     fn getFixedCursorPos(self: *BufferPanel) !Position {
-        const max_col = try self.getModeMaxCol();
+        const line_count = self.buffer.getLineCount();
+        const max_line = if (line_count > 0) (line_count - 1) else 0;
+        const line = std.math.clamp(self.cursor.line, 0, max_line);
+
+        const max_col = try self.getModeMaxCol(line);
         const column = std.math.clamp(self.cursor.column, 0, max_col);
 
         return Position{
-            .line = self.cursor.line,
+            .line = line,
             .column = column,
         };
     }
@@ -213,7 +217,7 @@ pub const BufferPanel = struct {
         const cursor_column = std.math.clamp(
             self.cursor.column,
             0,
-            try self.getModeMaxCol(),
+            try self.getModeMaxCol(self.cursor.line),
         );
 
         // Draw cursor
@@ -433,12 +437,16 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
+        try self.buffer.beginCheckpoint();
+
         try self.fixupCursor();
     }
 
     fn enterInsertModeAfter(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
+
+        try self.buffer.beginCheckpoint();
 
         self.cursor.column += 1;
         try self.fixupCursor();
@@ -448,7 +456,9 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
-        self.cursor.column = try self.getModeMaxCol();
+        try self.buffer.beginCheckpoint();
+
+        self.cursor.column = try self.getModeMaxCol(self.cursor.line);
         try self.fixupCursor();
     }
 
@@ -456,12 +466,16 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
+        try self.buffer.beginCheckpoint();
+
         self.cursor.column = 0;
         try self.fixupCursor();
     }
 
     fn enterInsertModeNextLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.buffer.beginCheckpoint();
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -476,6 +490,8 @@ pub const BufferPanel = struct {
 
     fn enterInsertModePrevLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.buffer.beginCheckpoint();
 
         try self.buffer.insert("\n", self.cursor.line, 0);
 
@@ -492,10 +508,12 @@ pub const BufferPanel = struct {
             self.cursor.column -= 1;
         }
         try self.fixupCursor();
+
+        try self.buffer.endCheckpoint();
     }
 
-    fn getModeMaxCol(self: *BufferPanel) !usize {
-        const line = try self.buffer.getLine(self.cursor.line);
+    fn getModeMaxCol(self: *BufferPanel, line_index: usize) !usize {
+        const line = try self.buffer.getLine(line_index);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
         return switch (self.mode) {
@@ -784,6 +802,18 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn undo(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        try self.buffer.undo();
+        try self.fixupCursor();
+    }
+
+    fn redo(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        try self.buffer.redo();
+        try self.fixupCursor();
+    }
+
     fn registerVT(allocator: *Allocator) anyerror!void {
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
@@ -827,6 +857,8 @@ pub const BufferPanel = struct {
         try normal_key_map.bind("y y", yankLine);
         try normal_key_map.bind("v", enterVisualMode);
         try normal_key_map.bind("V", enterVisualLineMode);
+        try normal_key_map.bind("u", undo);
+        try normal_key_map.bind("C-r", redo);
 
         try insert_key_map.bind("<esc>", exitInsertMode);
         try insert_key_map.bind("<left>", insertModeMoveLeft);

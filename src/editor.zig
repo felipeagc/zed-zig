@@ -343,6 +343,8 @@ pub fn mainLoop() void {
         renderer.beginFrame() catch unreachable;
         defer renderer.endFrame() catch unreachable;
 
-        draw() catch {};
+        draw() catch |err| {
+            std.log.warn("draw error: {}", .{err});
+        };
     }
 }
