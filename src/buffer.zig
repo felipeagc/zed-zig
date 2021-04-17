@@ -32,8 +32,14 @@ const TextOp = union(enum) {
         text: []const u8,
         codepoint_length: usize,
     },
-    begin_checkpoint: struct {},
-    end_checkpoint: struct {},
+    begin_checkpoint: struct {
+        line: usize,
+        column: usize,
+    },
+    end_checkpoint: struct {
+        line: usize,
+        column: usize,
+    },
 };
 
 const TextOpOptions = struct {
@@ -503,7 +509,7 @@ pub const Buffer = struct {
         }
     }
 
-    pub fn undo(self: *@This()) !void {
+    pub fn undo(self: *@This(), line: *usize, column: *usize) !void {
         if (self.undo_stack.popOrNull()) |op| {
             try self.undoOp(op);
             if (op != .end_checkpoint) return;
@@ -511,7 +517,11 @@ pub const Buffer = struct {
 
         while (self.undo_stack.popOrNull()) |op| {
             try self.undoOp(op);
-            if (op == .begin_checkpoint) return;
+            if (op == .begin_checkpoint) {
+                line.* = op.begin_checkpoint.line;
+                column.* = op.begin_checkpoint.column;
+                return;
+            }
         }
     }
 
@@ -538,7 +548,7 @@ pub const Buffer = struct {
         }
     }
 
-    pub fn redo(self: *@This()) !void {
+    pub fn redo(self: *@This(), line: *usize, column: *usize) !void {
         if (self.redo_stack.popOrNull()) |op| {
             try self.redoOp(op);
             if (op != .begin_checkpoint) return;
@@ -546,19 +556,29 @@ pub const Buffer = struct {
 
         while (self.redo_stack.popOrNull()) |op| {
             try self.redoOp(op);
-            if (op == .end_checkpoint) return;
+            if (op == .end_checkpoint) {
+                line.* = op.end_checkpoint.line;
+                column.* = op.end_checkpoint.column;
+                return;
+            }
         }
     }
 
-    pub fn beginCheckpoint(self: *@This()) !void {
+    pub fn beginCheckpoint(self: *@This(), line: usize, column: usize) !void {
         try self.undo_stack.append(TextOp{
-            .begin_checkpoint = .{},
+            .begin_checkpoint = .{
+                .line = line,
+                .column = column,
+            },
         });
     }
 
-    pub fn endCheckpoint(self: *@This()) !void {
+    pub fn endCheckpoint(self: *@This(), line: usize, column: usize) !void {
         try self.undo_stack.append(TextOp{
-            .end_checkpoint = .{},
+            .end_checkpoint = .{
+                .line = line,
+                .column = column,
+            },
         });
     }
 };

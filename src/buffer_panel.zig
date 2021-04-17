@@ -172,6 +172,18 @@ pub const BufferPanel = struct {
         });
     }
 
+    fn beginCheckpoint(self: *BufferPanel) void {
+        self.buffer.beginCheckpoint(self.cursor.line, self.cursor.column) catch |err| {
+            std.log.warn("could not insert begin checkpoint: {}", .{err});
+        };
+    }
+
+    fn endCheckpoint(self: *BufferPanel) void {
+        self.buffer.endCheckpoint(self.cursor.line, self.cursor.column) catch |err| {
+            std.log.warn("could not insert end checkpoint: {}", .{err});
+        };
+    }
+
     fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
@@ -370,6 +382,9 @@ pub const BufferPanel = struct {
     fn normalModeDeleteChar(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
         try self.fixupCursor();
 
         const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column, 1);
@@ -381,6 +396,9 @@ pub const BufferPanel = struct {
 
     fn normalModeDeleteCharBefore(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
 
         try self.fixupCursor();
 
@@ -398,6 +416,9 @@ pub const BufferPanel = struct {
 
     fn normalModeDeleteLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -423,6 +444,9 @@ pub const BufferPanel = struct {
     fn normalModeJoinLines(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
@@ -437,7 +461,7 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
-        try self.buffer.beginCheckpoint();
+        self.beginCheckpoint();
 
         try self.fixupCursor();
     }
@@ -446,7 +470,7 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
-        try self.buffer.beginCheckpoint();
+        self.beginCheckpoint();
 
         self.cursor.column += 1;
         try self.fixupCursor();
@@ -456,7 +480,7 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
-        try self.buffer.beginCheckpoint();
+        self.beginCheckpoint();
 
         self.cursor.column = try self.getModeMaxCol(self.cursor.line);
         try self.fixupCursor();
@@ -466,7 +490,7 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
-        try self.buffer.beginCheckpoint();
+        self.beginCheckpoint();
 
         self.cursor.column = 0;
         try self.fixupCursor();
@@ -475,7 +499,7 @@ pub const BufferPanel = struct {
     fn enterInsertModeNextLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        try self.buffer.beginCheckpoint();
+        self.beginCheckpoint();
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -491,7 +515,7 @@ pub const BufferPanel = struct {
     fn enterInsertModePrevLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        try self.buffer.beginCheckpoint();
+        self.beginCheckpoint();
 
         try self.buffer.insert("\n", self.cursor.line, 0);
 
@@ -509,7 +533,7 @@ pub const BufferPanel = struct {
         }
         try self.fixupCursor();
 
-        try self.buffer.endCheckpoint();
+        self.endCheckpoint();
     }
 
     fn getModeMaxCol(self: *BufferPanel, line_index: usize) !usize {
@@ -626,6 +650,9 @@ pub const BufferPanel = struct {
     fn pasteAfter(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
         const clipboard_content = (try renderer.getClipboardString(self.allocator)) orelse return;
         defer self.allocator.free(clipboard_content);
 
@@ -649,6 +676,10 @@ pub const BufferPanel = struct {
 
     fn pasteBefore(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
         const clipboard_content = (try renderer.getClipboardString(self.allocator)) orelse return;
         defer self.allocator.free(clipboard_content);
 
@@ -668,6 +699,9 @@ pub const BufferPanel = struct {
 
     fn yankLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -804,13 +838,13 @@ pub const BufferPanel = struct {
 
     fn undo(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        try self.buffer.undo();
+        try self.buffer.undo(&self.cursor.line, &self.cursor.column);
         try self.fixupCursor();
     }
 
     fn redo(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        try self.buffer.redo();
+        try self.buffer.redo(&self.cursor.line, &self.cursor.column);
         try self.fixupCursor();
     }
 
