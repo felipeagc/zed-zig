@@ -224,7 +224,11 @@ pub const BufferPanel = struct {
         const line_count = self.buffer.getLineCount();
         if (line_count == 0) return;
 
-        const first_line: isize = @floatToInt(isize, std.math.floor(scroll_y));
+        var first_line: isize = @floatToInt(isize, std.math.floor(scroll_y));
+        if (first_line >= line_count) {
+            first_line = @intCast(isize, line_count) - 1;
+        }
+
         var last_line: isize = @floatToInt(isize, std.math.floor(
             scroll_y + (@intToFloat(f64, rect.h) / @intToFloat(f64, char_height)),
         ));
@@ -252,6 +256,7 @@ pub const BufferPanel = struct {
 
         const buffer = self.buffer;
 
+        // Draw visual mode selection background
         if (self.mode == .visual) {
             renderer.setColor(editor.getFace("border").color);
 
@@ -293,8 +298,8 @@ pub const BufferPanel = struct {
             }
         }
 
+        // Draw text
         renderer.setColor(editor.getFace("foreground").color);
-
         var current_line_index: isize = first_line;
         while (current_line_index <= last_line) : (current_line_index += 1) {
             const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
@@ -313,11 +318,11 @@ pub const BufferPanel = struct {
             );
         }
 
-        const cursor_line_content = try self.buffer.getLine(cursor.line);
-        const cursor_line_length = try std.unicode.utf8CountCodepoints(cursor_line_content);
-
         // Draw cursor
         {
+            const cursor_line_content = try self.buffer.getLine(cursor.line);
+            const cursor_line_length = try std.unicode.utf8CountCodepoints(cursor_line_content);
+
             var cursor_x: i32 = 0;
             const cursor_y = rect.y - @floatToInt(
                 i32,
@@ -1133,12 +1138,37 @@ pub const BufferPanel = struct {
     fn normalReplaceChar(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
         var split_iter = mem.split(args, " ");
         const needle_utf8 = split_iter.next() orelse return error.InvalidCommandArgs;
 
         const cursor = try self.getFixedCursorPos();
         try self.buffer.delete(cursor.line, cursor.column, 1);
         try self.buffer.insert(needle_utf8, cursor.line, cursor.column);
+    }
+
+    fn visualModeDelete(panel: *editor.Panel, args: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        const cursor = try self.getFixedCursorPos();
+
+        const first_position = getFirstPosition(cursor, self.mark);
+        const start_pos = if (first_position == 0) cursor else self.mark;
+        const end_pos = if (first_position == 1) cursor else self.mark;
+
+        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+
+        try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
+
+        self.cursor = start_pos;
+
+        self.mode = .normal;
+        try self.fixupCursor();
     }
 
     fn registerVT(allocator: *Allocator) anyerror!void {
@@ -1206,6 +1236,7 @@ pub const BufferPanel = struct {
 
         try visual_key_map.bind("<esc>", exitVisualMode);
         try visual_key_map.bind("v", exitVisualMode);
+        try visual_key_map.bind("d", visualModeDelete);
 
         try visual_line_key_map.bind("<esc>", exitVisualLineMode);
         try visual_line_key_map.bind("V", exitVisualLineMode);
