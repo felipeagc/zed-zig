@@ -187,6 +187,9 @@ pub const BufferPanel = struct {
     fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
+        defer self.scroll_y.update(1.0 / 60.0);
+        defer self.scroll_x.update(1.0 / 60.0);
+
         const options = editor.getOptions();
         const font = options.main_font;
         const font_size = options.main_font_size;
@@ -207,11 +210,13 @@ pub const BufferPanel = struct {
         renderer.setColor(editor.getFace("foreground").color);
 
         const buffer = self.buffer;
-        for (buffer.lines.items) |line, i| {
+        var current_line_index: isize = first_line;
+        while (current_line_index <= last_line) : (current_line_index += 1) {
+            const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
             const line_y = rect.y - @floatToInt(
                 i32,
                 std.math.floor(scroll_y * @intToFloat(f64, char_height)),
-            ) + (@intCast(i32, i) * char_height);
+            ) + (@intCast(i32, current_line_index) * char_height);
 
             _ = try renderer.drawText(
                 line.content.items,
@@ -333,7 +338,16 @@ pub const BufferPanel = struct {
     }
 
     fn onScroll(panel: *editor.Panel, dx: f64, dy: f64) anyerror!void {
-        // std.log.info("scroll: {} {}", .{ dx, dy });
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        if (std.math.absFloat(dy) > 0) {
+            var new_target = self.scroll_y.to - 5 * dy;
+            const buffer_height = @intToFloat(f64, self.buffer.getLineCount());
+
+            new_target = std.math.max(0, new_target);
+            new_target = std.math.min(buffer_height - 1, new_target);
+            self.scroll_y.to = new_target;
+        }
     }
 
     fn normalMoveLeft(panel: *editor.Panel, args: []const u8) anyerror!void {

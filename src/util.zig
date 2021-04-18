@@ -21,7 +21,7 @@ pub fn Animation(comptime T: type) type {
                 renderer.requestRedraw();
             }
 
-            if (std.math.abs(self.value - self.to) > self.epsilon) {
+            if (std.math.absFloat(self.value - self.to) > self.epsilon) {
                 self.value = lerp(self.value, self.to, delta * self.rate);
             } else {
                 self.value = self.to;
