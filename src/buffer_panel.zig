@@ -866,6 +866,16 @@ pub const BufferPanel = struct {
         if (try self.getNextWordStart(start_pos, &line)) |word| {
             end_pos.line = line;
             end_pos.column = word.codepoint_start_pos;
+        } else {
+            end_pos.line = start_pos.line;
+            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(start_pos.line));
+            end_pos.column = line_length;
+        }
+
+        if (end_pos.line > start_pos.line) {
+            end_pos.line = start_pos.line;
+            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(start_pos.line));
+            end_pos.column = line_length + 1;
         }
 
         const distance = try self.buffer.getCodepointDistance(
@@ -893,6 +903,12 @@ pub const BufferPanel = struct {
         if (try self.getNextWordEnd(start_pos, &line)) |word| {
             end_pos.line = line;
             end_pos.column = word.codepoint_start_pos + word.codepoint_length;
+        }
+
+        if (end_pos.line > start_pos.line) {
+            end_pos.line = start_pos.line;
+            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(start_pos.line));
+            end_pos.column = line_length + 1;
         }
 
         const distance = try self.buffer.getCodepointDistance(
