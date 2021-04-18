@@ -63,10 +63,8 @@ const WordIterator = struct {
         class: CharClass,
     };
 
-    fn init(text: []const u8) !WordIterator {
-        return WordIterator{
-            .text = text,
-        };
+    fn init(text: []const u8) WordIterator {
+        return WordIterator{ .text = text };
     }
 
     fn nextWord(self: *WordIterator) ?Word {
@@ -918,7 +916,7 @@ pub const BufferPanel = struct {
         while (line_index < self.buffer.getLineCount()) : (line_index += 1) {
             const line = try self.buffer.getLine(line_index);
 
-            var iter = try WordIterator.init(line);
+            var iter = WordIterator.init(line);
             while (iter.nextWord()) |word| {
                 if ((line_index != cursor.line or word.codepoint_start_pos > cursor.column) and word.class != .whitespace) {
                     out_line.* = line_index;
@@ -935,7 +933,7 @@ pub const BufferPanel = struct {
         while (line_index < self.buffer.getLineCount()) : (line_index += 1) {
             const line = try self.buffer.getLine(line_index);
 
-            var iter = try WordIterator.init(line);
+            var iter = WordIterator.init(line);
             while (iter.nextWord()) |word| {
                 if ((line_index != cursor.line or (word.codepoint_start_pos + word.codepoint_length - 1) > cursor.column) and word.class != .whitespace) {
                     out_line.* = line_index;
@@ -954,7 +952,7 @@ pub const BufferPanel = struct {
         while (line_index >= 0) : (line_index -= 1) {
             const line = try self.buffer.getLine(@intCast(usize, line_index));
 
-            var iter = try WordIterator.init(line);
+            var iter = WordIterator.init(line);
             while (iter.nextWord()) |word| {
                 if ((line_index < first_line_index or word.codepoint_start_pos < cursor.column) and word.class != .whitespace) {
                     out_line.* = @intCast(usize, line_index);
