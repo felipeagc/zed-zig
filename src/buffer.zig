@@ -79,6 +79,35 @@ pub const Buffer = struct {
         return self;
     }
 
+    pub fn initFromFile(allocator: *Allocator, path: []const u8) !*Buffer {
+        var actual_path = path;
+        defer if (actual_path.ptr != path.ptr) {
+            allocator.free(actual_path);
+        };
+
+        if (mem.startsWith(u8, path, "~")) {
+            if (std.os.getenv("HOME")) |home_path| {
+                actual_path = try mem.concat(allocator, u8, &[_][]const u8{ home_path, path[1..] });
+            }
+        }
+
+        const file: std.fs.File = if (std.fs.path.isAbsolute(actual_path)) blk: {
+            break :blk try std.fs.openFileAbsolute(actual_path, .{ .read = true });
+        } else blk: {
+            break :blk try std.fs.cwd().openFile(actual_path, .{ .read = true });
+        };
+        defer file.close();
+
+        const stat = try file.stat();
+        const content = try file.readToEndAlloc(allocator, @intCast(usize, stat.size));
+        defer allocator.free(content);
+
+        var self = try Buffer.initWithContent(allocator, content);
+        errdefer self.deinit();
+
+        return self;
+    }
+
     pub fn clone(self: *@This()) !*Buffer {
         var new_buffer = try Buffer.init(self.allocator);
         errdefer new_buffer.deinit();
@@ -575,7 +604,7 @@ pub const Buffer = struct {
 
     pub fn endCheckpoint(self: *@This(), line: usize, column: usize) !void {
         if (self.undo_stack.items.len > 0) {
-            const last_op = &self.undo_stack.items[self.undo_stack.items.len-1];
+            const last_op = &self.undo_stack.items[self.undo_stack.items.len - 1];
             if (last_op.* == .begin_checkpoint) {
                 _ = self.undo_stack.pop();
                 return;

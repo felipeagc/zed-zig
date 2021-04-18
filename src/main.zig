@@ -13,13 +13,15 @@ pub fn main() anyerror!void {
     try editor.init(allocator);
     defer editor.deinit();
 
-    var buffer = try Buffer.initWithContent(allocator, 
-        \\hello world
-        \\yo
-        \\second line
-        \\
-        \\	olá mundo -- em português
-        );
+    // var buffer = try Buffer.initWithContent(allocator, 
+    //     \\hello world
+    //     \\yo
+    //     \\second line
+    //     \\
+    //     \\	olá mundo -- em português
+    //     );
+
+    var buffer = try Buffer.initFromFile(allocator, "~/downloads/s7.c");
 
     // var buffer = try Buffer.init(allocator, "abc");
     defer buffer.deinit();
