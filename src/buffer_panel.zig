@@ -244,6 +244,10 @@ pub const BufferPanel = struct {
             var iter = view.iterator();
 
             var cursor_codepoint: u32 = ' ';
+            var cursor_width = try font.getCharAdvance(font_size, ' ');
+            if (self.mode == .insert) {
+                cursor_width = @divTrunc(cursor_width, 5);
+            }
 
             var i: usize = 0;
             while (iter.nextCodepoint()) |codepoint| {
@@ -262,24 +266,27 @@ pub const BufferPanel = struct {
 
             renderer.setColor(editor.getFace("foreground").color);
             try renderer.drawRect(.{
-                .w = try font.getCharAdvance(font_size, ' '),
+                .w = cursor_width,
                 .h = char_height,
                 .x = cursor_x,
                 .y = cursor_y,
             });
 
-            switch (cursor_codepoint) {
-                '\t', '\n', '\r' => {},
-                else => {
-                    renderer.setColor(editor.getFace("background").color);
-                    _ = try renderer.drawCodepoint(
-                        cursor_codepoint,
-                        font,
-                        font_size,
-                        cursor_x,
-                        cursor_y,
-                    );
-                },
+            if (self.mode != .insert) {
+                switch (cursor_codepoint) {
+                    '\t', '\n', '\r' => {},
+                    else => {
+                        renderer.setColor(editor.getFace("background").color);
+
+                        _ = try renderer.drawCodepoint(
+                            cursor_codepoint,
+                            font,
+                            font_size,
+                            cursor_x,
+                            cursor_y,
+                        );
+                    },
+                }
             }
         }
     }
