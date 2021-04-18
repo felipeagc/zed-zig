@@ -329,7 +329,7 @@ pub const BufferPanel = struct {
         // std.log.info("scroll: {} {}", .{ dx, dy });
     }
 
-    fn normalMoveLeft(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveLeft(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         try self.fixupCursor();
@@ -341,7 +341,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn normalMoveRight(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveRight(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         try self.fixupCursor();
@@ -355,43 +355,43 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn normalMoveUp(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveUp(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         if (self.cursor.line > 0) {
             self.cursor.line -= 1;
         }
     }
 
-    fn normalMoveDown(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveDown(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         if ((self.cursor.line + 1) < self.buffer.getLineCount()) {
             self.cursor.line += 1;
         }
     }
 
-    fn normalMoveToTop(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveToTop(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.cursor.line = 0;
     }
 
-    fn normalMoveToBottom(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveToBottom(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.cursor.line = self.buffer.getLineCount() - 1;
     }
 
-    fn normalMoveToLineStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveToLineStart(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.cursor.column = 0;
     }
 
-    fn normalMoveToLineEnd(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalMoveToLineEnd(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
         self.cursor.column = line_length - 1;
     }
 
-    fn normalModeDeleteChar(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalModeDeleteChar(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -409,7 +409,7 @@ pub const BufferPanel = struct {
         try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
     }
 
-    fn normalModeDeleteCharBefore(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalModeDeleteCharBefore(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -429,7 +429,7 @@ pub const BufferPanel = struct {
         }
     }
 
-    fn normalModeDeleteLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalModeDeleteLine(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -456,7 +456,7 @@ pub const BufferPanel = struct {
         self.cursor.line = std.math.clamp(self.cursor.line, 0, max_line);
     }
 
-    fn normalModeJoinLines(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn normalModeJoinLines(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -472,7 +472,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn enterInsertModeBefore(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterInsertModeBefore(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
@@ -481,7 +481,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn enterInsertModeAfter(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterInsertModeAfter(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
@@ -491,7 +491,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn enterInsertModeEndOfLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterInsertModeEndOfLine(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
@@ -501,7 +501,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn enterInsertModeBeginningOfLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterInsertModeBeginningOfLine(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .insert;
 
@@ -511,7 +511,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn enterInsertModeNextLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterInsertModeNextLine(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -527,7 +527,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn enterInsertModePrevLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterInsertModePrevLine(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -539,7 +539,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn exitInsertMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn exitInsertMode(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .normal;
 
@@ -564,7 +564,7 @@ pub const BufferPanel = struct {
         };
     }
 
-    fn insertModeMoveRight(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn insertModeMoveRight(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         try self.fixupCursor();
@@ -581,7 +581,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn insertModeMoveLeft(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn insertModeMoveLeft(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         try self.fixupCursor();
@@ -600,7 +600,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn insertModeMoveUp(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn insertModeMoveUp(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         if (self.cursor.line > 0) {
@@ -608,7 +608,7 @@ pub const BufferPanel = struct {
         }
     }
 
-    fn insertModeMoveDown(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn insertModeMoveDown(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         if ((self.cursor.line + 1) < self.buffer.getLineCount()) {
@@ -616,10 +616,10 @@ pub const BufferPanel = struct {
         }
     }
 
-    fn insertModeBackspace(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn insertModeBackspace(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         if (!(self.cursor.column == 0 and self.cursor.line == 0)) {
-            try insertModeMoveLeft(panel, &[_]u8{}, 1);
+            try insertModeMoveLeft(panel, &[_]u8{});
             const first_content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column, 1);
             defer self.allocator.free(first_content);
             try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
@@ -632,20 +632,20 @@ pub const BufferPanel = struct {
                         break;
                     }
 
-                    try insertModeMoveLeft(panel, &[_]u8{}, 1);
+                    try insertModeMoveLeft(panel, &[_]u8{});
                     try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
                 }
             }
         }
     }
 
-    fn insertModeInsertNewLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn insertModeInsertNewLine(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         try self.buffer.insert("\n", self.cursor.line, self.cursor.column);
-        try insertModeMoveRight(panel, &[_]u8{}, 1);
+        try insertModeMoveRight(panel, &[_]u8{});
     }
 
-    fn insertModeInsertTab(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn insertModeInsertTab(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         if (editor.getOptions().expandtab) {
             const tab_width = editor.getOptions().tab_width;
@@ -654,15 +654,15 @@ pub const BufferPanel = struct {
             var i: u32 = 0;
             while (i < spaces) : (i += 1) {
                 try self.buffer.insert(" ", self.cursor.line, self.cursor.column);
-                try insertModeMoveRight(panel, &[_]u8{}, 1);
+                try insertModeMoveRight(panel, &[_]u8{});
             }
         } else {
             try self.buffer.insert("\t", self.cursor.line, self.cursor.column);
-            try insertModeMoveRight(panel, &[_]u8{}, 1);
+            try insertModeMoveRight(panel, &[_]u8{});
         }
     }
 
-    fn pasteAfter(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn pasteAfter(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -689,7 +689,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn pasteBefore(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn pasteBefore(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -712,7 +712,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn yankLine(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn yankLine(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -726,7 +726,7 @@ pub const BufferPanel = struct {
         try renderer.setClipboardString(content);
     }
 
-    fn enterVisualMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterVisualMode(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .visual;
         try self.fixupCursor();
@@ -734,7 +734,7 @@ pub const BufferPanel = struct {
         self.mark = self.cursor;
     }
 
-    fn enterVisualLineMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn enterVisualLineMode(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .visual_line;
         try self.fixupCursor();
@@ -742,13 +742,13 @@ pub const BufferPanel = struct {
         self.mark = self.cursor;
     }
 
-    fn exitVisualMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn exitVisualMode(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .normal;
         try self.fixupCursor();
     }
 
-    fn exitVisualLineMode(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn exitVisualLineMode(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.mode = .normal;
         try self.fixupCursor();
@@ -811,7 +811,7 @@ pub const BufferPanel = struct {
         return null;
     }
 
-    fn moveToNextWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn moveToNextWordStart(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         var cursor = try self.getFixedCursorPos();
@@ -827,7 +827,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn moveToNextWordEnd(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn moveToNextWordEnd(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         var cursor = try self.getFixedCursorPos();
@@ -840,7 +840,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn moveToPrevWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn moveToPrevWordStart(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         var cursor = try self.getFixedCursorPos();
@@ -853,7 +853,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn deleteToNextWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn deleteToNextWordStart(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -890,7 +890,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn deleteToNextWordEnd(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn deleteToNextWordEnd(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -923,7 +923,7 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn deleteToPrevWordStart(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn deleteToPrevWordStart(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         self.beginCheckpoint();
@@ -952,13 +952,13 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn undo(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn undo(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         try self.buffer.undo(&self.cursor.line, &self.cursor.column);
         try self.fixupCursor();
     }
 
-    fn redo(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void {
+    fn redo(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         try self.buffer.redo(&self.cursor.line, &self.cursor.column);
         try self.fixupCursor();

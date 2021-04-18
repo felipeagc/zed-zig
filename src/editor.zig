@@ -135,7 +135,7 @@ pub fn init(allocator: *Allocator) !void {
     try registerPanelVT(&@import("buffer_panel.zig").VT);
 
     try g_editor.global_keymap.bind("C-=", struct {
-        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8) anyerror!void {
             g_editor.options.main_font_size +%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -146,7 +146,7 @@ pub fn init(allocator: *Allocator) !void {
     }.callback);
 
     try g_editor.global_keymap.bind("C--", struct {
-        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8) anyerror!void {
             g_editor.options.main_font_size -%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -157,14 +157,14 @@ pub fn init(allocator: *Allocator) !void {
     }.callback);
 
     try g_editor.global_keymap.bind("C-j", struct {
-        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8) anyerror!void {
             g_editor.selected_panel +%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
     }.callback);
 
     try g_editor.global_keymap.bind("C-k", struct {
-        fn callback(panel: *Panel, args: []const u8, count: i64) anyerror!void {
+        fn callback(panel: *Panel, args: []const u8) anyerror!void {
             g_editor.selected_panel -%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }

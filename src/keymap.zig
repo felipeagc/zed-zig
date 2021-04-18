@@ -3,7 +3,7 @@ const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Command = fn(panel: *editor.Panel, args: []const u8, count: i64) anyerror!void;
+pub const Command = fn(panel: *editor.Panel, args: []const u8) anyerror!void;
 
 pub const Binding = union(enum) {
     submap: *SubMap,
@@ -42,7 +42,7 @@ pub const SubMap = struct {
                     return submap;
                 },
                 .command => |command| {
-                    try command(panel, "", 1);
+                    try command(panel, "");
                     return null;
                 },
             }
