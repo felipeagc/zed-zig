@@ -971,6 +971,65 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn normalFindCharForward(panel: *editor.Panel, args: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var split_iter = mem.split(args, " ");
+        const needle_utf8 = split_iter.next() orelse return error.InvalidCommandArgs;
+        const needle_codepoint = try std.unicode.utf8Decode(needle_utf8);
+
+        const cursor = try self.getFixedCursorPos();
+        const line = try self.buffer.getLine(cursor.line);
+        const view = try std.unicode.Utf8View.init(line);
+        var iter = view.iterator();
+
+        var i: usize = 0;
+        while (iter.nextCodepoint()) |codepoint| {
+            if (i > cursor.column and codepoint == needle_codepoint) {
+                self.cursor.column = i;
+                break;
+            }
+            i += 1;
+        }
+
+        try self.fixupCursor();
+    }
+
+    fn normalFindCharBackward(panel: *editor.Panel, args: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var split_iter = mem.split(args, " ");
+        const needle_utf8 = split_iter.next() orelse return error.InvalidCommandArgs;
+        const needle_codepoint = try std.unicode.utf8Decode(needle_utf8);
+
+        const cursor = try self.getFixedCursorPos();
+        const line = try self.buffer.getLine(cursor.line);
+        const view = try std.unicode.Utf8View.init(line);
+        var iter = view.iterator();
+
+        var i: usize = 0;
+        while (iter.nextCodepoint()) |codepoint| {
+            if (i < cursor.column and codepoint == needle_codepoint) {
+                self.cursor.column = i;
+                break;
+            }
+            i += 1;
+        }
+
+        try self.fixupCursor();
+    }
+
+    fn normalReplaceChar(panel: *editor.Panel, args: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var split_iter = mem.split(args, " ");
+        const needle_utf8 = split_iter.next() orelse return error.InvalidCommandArgs;
+
+        const cursor = try self.getFixedCursorPos();
+        try self.buffer.delete(cursor.line, cursor.column, 1);
+        try self.buffer.insert(needle_utf8, cursor.line, cursor.column);
+    }
+
     fn registerVT(allocator: *Allocator) anyerror!void {
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
@@ -998,6 +1057,8 @@ pub const BufferPanel = struct {
             try key_map.bind("w", moveToNextWordStart);
             try key_map.bind("e", moveToNextWordEnd);
             try key_map.bind("b", moveToPrevWordStart);
+            try key_map.bind("f <?>", normalFindCharForward);
+            try key_map.bind("F <?>", normalFindCharBackward);
         }
 
         try normal_key_map.bind("d w", deleteToNextWordStart);
@@ -1021,6 +1082,7 @@ pub const BufferPanel = struct {
         try normal_key_map.bind("V", enterVisualLineMode);
         try normal_key_map.bind("u", undo);
         try normal_key_map.bind("C-r", redo);
+        try normal_key_map.bind("r <?>", normalReplaceChar);
 
         try insert_key_map.bind("<esc>", exitInsertMode);
         try insert_key_map.bind("<left>", insertModeMoveLeft);

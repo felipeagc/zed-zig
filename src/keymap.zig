@@ -3,7 +3,7 @@ const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Command = fn(panel: *editor.Panel, args: []const u8) anyerror!void;
+pub const Command = fn (panel: *editor.Panel, args: []const u8) anyerror!void;
 
 pub const Binding = union(enum) {
     submap: *SubMap,
@@ -49,6 +49,19 @@ pub const SubMap = struct {
         }
 
         return null;
+    }
+
+    fn triggerWildcard(self: *@This(), codepoint: u32, panel: *editor.Panel) !bool {
+        if (self.map.get("<?>")) |binding| {
+            if (binding == .command) {
+                var bytes = [4]u8{ 0, 0, 0, 0 };
+                const byte_length = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
+                try binding.command(panel, bytes[0..byte_length]);
+                return true;
+            }
+        }
+
+        return false;
     }
 };
 
@@ -166,6 +179,17 @@ pub const KeyMap = struct {
         var bytes = [_]u8{0} ** 4;
         const byte_count = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
         const key_name = bytes[0..byte_count];
+
+        var triggered_wildcard = self.current_submap.triggerWildcard(codepoint, panel) catch |err| {
+            self.current_submap = self.root_submap;
+            std.log.info("onChar error: {}", .{err});
+            return false;
+        };
+
+        if (triggered_wildcard) {
+            self.current_submap = self.root_submap;
+            return false;
+        }
 
         var maybe_submap = self.current_submap.trigger(key_name, panel) catch |err| {
             self.current_submap = self.root_submap;
