@@ -298,6 +298,42 @@ pub const BufferPanel = struct {
             }
         }
 
+        // Draw visual line mode selection background
+        if (self.mode == .visual_line) {
+            renderer.setColor(editor.getFace("border").color);
+
+            const first_position = getFirstPosition(cursor, self.mark);
+            const start_pos = if (first_position == 0) cursor else self.mark;
+            const end_pos = if (first_position == 1) cursor else self.mark;
+
+            var current_line_index: isize = first_line;
+            while (current_line_index <= last_line) : (current_line_index += 1) {
+                if (@intCast(usize, current_line_index) >= start_pos.line and
+                    @intCast(usize, current_line_index) <= end_pos.line)
+                {
+                    const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
+                    const line_y = rect.y - @floatToInt(
+                        i32,
+                        std.math.floor(scroll_y * @intToFloat(f64, char_height)),
+                    ) + (@intCast(i32, current_line_index) * char_height);
+
+                    var line_advance: i32 = 0;
+
+                    var iter = std.unicode.Utf8View.initUnchecked(line.content.items).iterator();
+                    while (iter.nextCodepoint()) |codepoint| {
+                        line_advance += try font.getCharAdvance(font_size, codepoint);
+                    }
+
+                    _ = try renderer.drawRect(renderer.Rect{
+                        .x = rect.x,
+                        .y = line_y,
+                        .w = line_advance,
+                        .h = char_height,
+                    });
+                }
+            }
+        }
+
         // Draw text
         renderer.setColor(editor.getFace("foreground").color);
         var current_line_index: isize = first_line;
@@ -1171,6 +1207,33 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn visualLineModeDelete(panel: *editor.Panel, args: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        const cursor = try self.getFixedCursorPos();
+
+        const first_position = getFirstPosition(cursor, self.mark);
+        var start_pos = if (first_position == 0) cursor else self.mark;
+        var end_pos = if (first_position == 1) cursor else self.mark;
+
+        start_pos.column = 0;
+
+        const end_line = try self.buffer.getLine(end_pos.line);
+        end_pos.column = try std.unicode.utf8CountCodepoints(end_line);
+
+        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+
+        try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
+
+        self.cursor = start_pos;
+
+        self.mode = .normal;
+        try self.fixupCursor();
+    }
+
     fn registerVT(allocator: *Allocator) anyerror!void {
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
@@ -1240,6 +1303,7 @@ pub const BufferPanel = struct {
 
         try visual_line_key_map.bind("<esc>", exitVisualLineMode);
         try visual_line_key_map.bind("V", exitVisualLineMode);
+        try visual_line_key_map.bind("d", visualLineModeDelete);
     }
 
     fn unregisterVT() void {
