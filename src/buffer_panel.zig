@@ -123,6 +123,7 @@ pub const BufferPanel = struct {
     mark: Position = .{},
     scroll_x: util.Animation(f64) = .{},
     scroll_y: util.Animation(f64) = .{},
+    scroll_to_cursor: bool = false,
 
     pub fn init(allocator: *Allocator, buffer: *Buffer) !*editor.Panel {
         var self = try allocator.create(BufferPanel);
@@ -131,6 +132,10 @@ pub const BufferPanel = struct {
             .buffer = buffer,
         };
         return &self.panel;
+    }
+
+    fn scrollToCursor(self: *BufferPanel) void {
+        self.scroll_to_cursor = true;
     }
 
     fn getFixedCursorPos(self: *BufferPanel) !Position {
@@ -149,6 +154,7 @@ pub const BufferPanel = struct {
 
     fn fixupCursor(self: *BufferPanel) !void {
         self.cursor = try self.getFixedCursorPos();
+        self.scrollToCursor();
     }
 
     fn getStatusLine(panel: *editor.Panel, allocator: *Allocator) anyerror![]const u8 {
@@ -194,6 +200,7 @@ pub const BufferPanel = struct {
         const font = options.main_font;
         const font_size = options.main_font_size;
         const char_height = font.getCharHeight(font_size);
+        const scroll_margin = @intToFloat(f64, options.scroll_margin);
         const scroll_y = self.scroll_y.value;
         const line_count = self.buffer.getLineCount();
         if (line_count == 0) return;
@@ -206,6 +213,24 @@ pub const BufferPanel = struct {
             last_line = @intCast(isize, line_count) - 1;
         }
         last_line = std.math.max(first_line, last_line);
+
+        if (self.scroll_to_cursor) {
+            const float_char_height = @intToFloat(f64, char_height);
+            const cursor = try self.getFixedCursorPos();
+            const cursor_pos_y_px: f64 = @intToFloat(f64, cursor.line) * float_char_height;
+            const margin_start_y_px: f64 = (self.scroll_y.to + scroll_margin) * float_char_height;
+            const margin_end_y_px = (self.scroll_y.to - scroll_margin) * float_char_height + @intToFloat(f64, rect.h);
+
+            if (margin_start_y_px > cursor_pos_y_px) {
+                self.scroll_y.to = @intToFloat(f64, cursor.line) - scroll_margin;
+                self.scroll_y.to = std.math.max(0, self.scroll_y.to);
+            } else if (margin_end_y_px < (cursor_pos_y_px + float_char_height)) {
+                self.scroll_y.to = @intToFloat(f64, cursor.line) + scroll_margin + 1.0 - (@intToFloat(f64, rect.h) / float_char_height);
+                self.scroll_y.to = std.math.max(0, self.scroll_y.to);
+            }
+
+            self.scroll_to_cursor = false;
+        }
 
         renderer.setColor(editor.getFace("foreground").color);
 
@@ -381,6 +406,8 @@ pub const BufferPanel = struct {
         if (self.cursor.line > 0) {
             self.cursor.line -= 1;
         }
+
+        self.scrollToCursor();
     }
 
     fn normalMoveDown(panel: *editor.Panel, args: []const u8) anyerror!void {
@@ -388,21 +415,29 @@ pub const BufferPanel = struct {
         if ((self.cursor.line + 1) < self.buffer.getLineCount()) {
             self.cursor.line += 1;
         }
+
+        self.scrollToCursor();
     }
 
     fn normalMoveToTop(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.cursor.line = 0;
+
+        self.scrollToCursor();
     }
 
     fn normalMoveToBottom(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.cursor.line = self.buffer.getLineCount() - 1;
+
+        self.scrollToCursor();
     }
 
     fn normalMoveToLineStart(panel: *editor.Panel, args: []const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         self.cursor.column = 0;
+
+        try self.fixupCursor();
     }
 
     fn normalMoveToLineEnd(panel: *editor.Panel, args: []const u8) anyerror!void {
@@ -410,6 +445,8 @@ pub const BufferPanel = struct {
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
         self.cursor.column = line_length - 1;
+
+        try self.fixupCursor();
     }
 
     fn normalModeDeleteChar(panel: *editor.Panel, args: []const u8) anyerror!void {
@@ -475,6 +512,8 @@ pub const BufferPanel = struct {
         const line_count = self.buffer.getLineCount();
         const max_line = if (line_count > 0) (line_count - 1) else 0;
         self.cursor.line = std.math.clamp(self.cursor.line, 0, max_line);
+
+        try self.fixupCursor();
     }
 
     fn normalModeJoinLines(panel: *editor.Panel, args: []const u8) anyerror!void {
@@ -627,6 +666,8 @@ pub const BufferPanel = struct {
         if (self.cursor.line > 0) {
             self.cursor.line -= 1;
         }
+
+        self.scrollToCursor();
     }
 
     fn insertModeMoveDown(panel: *editor.Panel, args: []const u8) anyerror!void {
@@ -635,6 +676,8 @@ pub const BufferPanel = struct {
         if ((self.cursor.line + 1) < self.buffer.getLineCount()) {
             self.cursor.line += 1;
         }
+
+        self.scrollToCursor();
     }
 
     fn insertModeBackspace(panel: *editor.Panel, args: []const u8) anyerror!void {
