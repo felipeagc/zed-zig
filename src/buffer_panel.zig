@@ -33,6 +33,24 @@ fn codepointToCharClass(codepoint: u32) CharClass {
     };
 }
 
+fn getFirstPosition(a: Position, b: Position) usize {
+    if (a.line < b.line) {
+        return 0;
+    } else if (b.line < a.line) {
+        return 1;
+    } else if (a.column < b.column) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+fn positionIsBetween(pos: Position, start: Position, end: Position) bool {
+    const is_after_start = pos.line > start.line or (start.line == pos.line and pos.column >= start.column);
+    const is_before_end = pos.line < end.line or (pos.line == end.line and pos.column <= end.column);
+    return is_after_start and is_before_end;
+}
+
 const WordIterator = struct {
     text: []const u8,
     pos: usize = 0,
@@ -173,8 +191,8 @@ pub const BufferPanel = struct {
         return try std.fmt.allocPrint(allocator, "{s} {s} L#{} C#{}", .{
             mode_name,
             buffer_name,
-            cursor_pos.line,
-            cursor_pos.column,
+            cursor_pos.line + 1,
+            cursor_pos.column + 1,
         });
     }
 
@@ -196,6 +214,7 @@ pub const BufferPanel = struct {
         defer self.scroll_y.update(1.0 / 60.0);
         defer self.scroll_x.update(1.0 / 60.0);
 
+        const cursor = try self.getFixedCursorPos();
         const options = editor.getOptions();
         const font = options.main_font;
         const font_size = options.main_font_size;
@@ -216,7 +235,6 @@ pub const BufferPanel = struct {
 
         if (self.scroll_to_cursor) {
             const float_char_height = @intToFloat(f64, char_height);
-            const cursor = try self.getFixedCursorPos();
             const cursor_pos_y_px: f64 = @intToFloat(f64, cursor.line) * float_char_height;
             const margin_start_y_px: f64 = (self.scroll_y.to + scroll_margin) * float_char_height;
             const margin_end_y_px = (self.scroll_y.to - scroll_margin) * float_char_height + @intToFloat(f64, rect.h);
@@ -232,9 +250,51 @@ pub const BufferPanel = struct {
             self.scroll_to_cursor = false;
         }
 
+        const buffer = self.buffer;
+
+        if (self.mode == .visual) {
+            renderer.setColor(editor.getFace("border").color);
+
+            const first_position = getFirstPosition(cursor, self.mark);
+            const start_pos = if (first_position == 0) cursor else self.mark;
+            const end_pos = if (first_position == 1) cursor else self.mark;
+
+            var current_line_index: isize = first_line;
+            while (current_line_index <= last_line) : (current_line_index += 1) {
+                const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
+                const line_y = rect.y - @floatToInt(
+                    i32,
+                    std.math.floor(scroll_y * @intToFloat(f64, char_height)),
+                ) + (@intCast(i32, current_line_index) * char_height);
+
+                var char_x = rect.x;
+                var char_index: usize = 0;
+
+                var iter = std.unicode.Utf8View.initUnchecked(line.content.items).iterator();
+                while (iter.nextCodepoint()) |codepoint| {
+                    const char_advance = try font.getCharAdvance(font_size, codepoint);
+
+                    if (positionIsBetween(
+                        Position{ .line = @intCast(usize, current_line_index), .column = char_index },
+                        start_pos,
+                        end_pos,
+                    )) {
+                        _ = try renderer.drawRect(renderer.Rect{
+                            .x = char_x,
+                            .y = line_y,
+                            .w = char_advance,
+                            .h = char_height,
+                        });
+                    }
+
+                    char_x += char_advance;
+                    char_index += 1;
+                }
+            }
+        }
+
         renderer.setColor(editor.getFace("foreground").color);
 
-        const buffer = self.buffer;
         var current_line_index: isize = first_line;
         while (current_line_index <= last_line) : (current_line_index += 1) {
             const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
@@ -253,14 +313,8 @@ pub const BufferPanel = struct {
             );
         }
 
-        const cursor_line = self.cursor.line;
-        const cursor_line_content = try self.buffer.getLine(cursor_line);
+        const cursor_line_content = try self.buffer.getLine(cursor.line);
         const cursor_line_length = try std.unicode.utf8CountCodepoints(cursor_line_content);
-        const cursor_column = std.math.clamp(
-            self.cursor.column,
-            0,
-            try self.getModeMaxCol(self.cursor.line),
-        );
 
         // Draw cursor
         {
@@ -268,7 +322,7 @@ pub const BufferPanel = struct {
             const cursor_y = rect.y - @floatToInt(
                 i32,
                 std.math.floor(scroll_y * @intToFloat(f64, char_height)),
-            ) + (@intCast(i32, cursor_line) * char_height);
+            ) + (@intCast(i32, cursor.line) * char_height);
 
             const view = try std.unicode.Utf8View.init(cursor_line_content);
             var iter = view.iterator();
@@ -281,7 +335,7 @@ pub const BufferPanel = struct {
 
             var i: usize = 0;
             while (iter.nextCodepoint()) |codepoint| {
-                if (i == cursor_column) {
+                if (i == cursor.column) {
                     cursor_codepoint = codepoint;
                     break;
                 }
@@ -1151,8 +1205,10 @@ pub const BufferPanel = struct {
         try insert_key_map.bind("<tab>", insertModeInsertTab);
 
         try visual_key_map.bind("<esc>", exitVisualMode);
+        try visual_key_map.bind("v", exitVisualMode);
 
         try visual_line_key_map.bind("<esc>", exitVisualLineMode);
+        try visual_line_key_map.bind("V", exitVisualLineMode);
     }
 
     fn unregisterVT() void {
