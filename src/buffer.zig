@@ -574,6 +574,14 @@ pub const Buffer = struct {
     }
 
     pub fn endCheckpoint(self: *@This(), line: usize, column: usize) !void {
+        if (self.undo_stack.items.len > 0) {
+            const last_op = &self.undo_stack.items[self.undo_stack.items.len-1];
+            if (last_op.* == .begin_checkpoint) {
+                _ = self.undo_stack.pop();
+                return;
+            }
+        }
+
         try self.undo_stack.append(TextOp{
             .end_checkpoint = .{
                 .line = line,
