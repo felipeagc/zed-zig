@@ -42,7 +42,7 @@ pub fn main() anyerror!void {
     //     \\	olá mundo -- em português
     //     );
 
-    var buffer = try Buffer.initFromFile(allocator, "~/downloads/s7.c");
+    var buffer = try Buffer.initFromFile(allocator, "~/downloads/s73.c");
 
     // var buffer = try Buffer.init(allocator, "abc");
     defer buffer.deinit();

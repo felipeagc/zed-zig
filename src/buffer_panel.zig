@@ -176,8 +176,6 @@ pub const BufferPanel = struct {
     fn getStatusLine(panel: *editor.Panel, allocator: *Allocator) anyerror![]const u8 {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        const buffer_name = "** unnamed buffer **";
-
         const cursor_pos = try self.getFixedCursorPos();
         const mode_name = switch (self.mode) {
             .normal => "[N]",
@@ -188,7 +186,7 @@ pub const BufferPanel = struct {
 
         return try std.fmt.allocPrint(allocator, "{s} {s} L#{} C#{}", .{
             mode_name,
-            buffer_name,
+            self.buffer.name,
             cursor_pos.line + 1,
             cursor_pos.column + 1,
         });

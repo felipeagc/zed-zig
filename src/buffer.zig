@@ -46,19 +46,28 @@ const TextOpOptions = struct {
     save_history: bool,
 };
 
+pub const BufferOptions = struct {
+    name: ?[]const u8 = null,
+    path: ?[]const u8 = null,
+};
+
 pub const Buffer = struct {
     allocator: *Allocator,
     lines: ArrayList(Line),
     undo_stack: ArrayList(TextOp),
     redo_stack: ArrayList(TextOp),
+    name: []const u8,
+    path: ?[]const u8,
 
-    pub fn init(allocator: *Allocator) !*Buffer {
+    pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
         var self = try allocator.create(@This());
         self.* = .{
             .allocator = allocator,
             .lines = ArrayList(Line).init(allocator),
             .undo_stack = ArrayList(TextOp).init(allocator),
             .redo_stack = ArrayList(TextOp).init(allocator),
+            .name = try allocator.dupe(u8, options.name orelse "** unnamed buffer **"),
+            .path = if (options.path) |path| try std.fs.realpathAlloc(allocator, path) else null,
         };
 
         errdefer self.deinit();
@@ -68,8 +77,8 @@ pub const Buffer = struct {
         return self;
     }
 
-    pub fn initWithContent(allocator: *Allocator, content: []const u8) !*Buffer {
-        var self = try Buffer.init(allocator);
+    pub fn initWithContent(allocator: *Allocator, content: []const u8, options: BufferOptions) !*Buffer {
+        var self = try Buffer.init(allocator, options);
         errdefer self.deinit();
 
         try self.insertInternal(content, 0, 0, .{
@@ -102,14 +111,17 @@ pub const Buffer = struct {
         const content = try file.readToEndAlloc(allocator, @intCast(usize, stat.size));
         defer allocator.free(content);
 
-        var self = try Buffer.initWithContent(allocator, content);
+        var self = try Buffer.initWithContent(allocator, content, .{
+            .name = std.fs.path.basename(actual_path),
+            .path = actual_path,
+        });
         errdefer self.deinit();
 
         return self;
     }
 
-    pub fn clone(self: *@This()) !*Buffer {
-        var new_buffer = try Buffer.init(self.allocator);
+    pub fn clone(self: *@This(), options: BufferOptions) !*Buffer {
+        var new_buffer = try Buffer.init(self.allocator, options);
         errdefer new_buffer.deinit();
 
         for (new_buffer.lines.items) |*line| {
@@ -165,6 +177,10 @@ pub const Buffer = struct {
             }
         }
 
+        self.allocator.free(self.name);
+        if (self.path) |path| {
+            self.allocator.free(path);
+        }
         self.undo_stack.deinit();
         self.redo_stack.deinit();
         self.lines.deinit();
