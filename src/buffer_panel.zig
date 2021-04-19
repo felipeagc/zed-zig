@@ -2,6 +2,7 @@ const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const Buffer = @import("buffer.zig").Buffer;
+const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
 const KeyMap = @import("keymap.zig").KeyMap;
 const util = @import("util.zig");
 const mem = std.mem;
@@ -1249,6 +1250,14 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn normalModeForwardSearch(panel: *editor.Panel, args: []const u8) anyerror!void {
+        try MiniBuffer.activate(panel, "/", .{});
+    }
+
+    fn normalModeBackwardSearch(panel: *editor.Panel, args: []const u8) anyerror!void {
+        try MiniBuffer.activate(panel, "?", .{});
+    }
+
     fn registerVT(allocator: *Allocator) anyerror!void {
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
@@ -1302,6 +1311,9 @@ pub const BufferPanel = struct {
         try normal_key_map.bind("u", undo);
         try normal_key_map.bind("C-r", redo);
         try normal_key_map.bind("r <?>", normalReplaceChar);
+
+        try normal_key_map.bind("/", normalModeForwardSearch);
+        try normal_key_map.bind("?", normalModeBackwardSearch);
 
         try insert_key_map.bind("<esc>", exitInsertMode);
         try insert_key_map.bind("<left>", insertModeMoveLeft);
