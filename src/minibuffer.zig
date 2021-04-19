@@ -9,10 +9,15 @@ pub const MiniBuffer = struct {
     allocator: *Allocator,
     text: ArrayList(u8),
     prompt: ?[]const u8 = null,
-    callback: ?Callback = null,
+    callbacks: Callbacks = .{},
     cursor: usize = 0,
 
     pub const Callback = fn (panel: *editor.Panel, text: []const u8) anyerror!void;
+    pub const Callbacks = struct {
+        on_change: ?Callback = null,
+        on_confirm: ?Callback = null,
+        on_cancel: ?Callback = null,
+    };
 
     pub fn init(allocator: *Allocator) !*MiniBuffer {
         const self = try allocator.create(MiniBuffer);
@@ -181,7 +186,7 @@ pub const MiniBuffer = struct {
         });
     }
 
-    pub fn activate(panel: *editor.Panel, prompt: []const u8, callback: Callback) !void {
+    pub fn activate(panel: *editor.Panel, prompt: []const u8, callbacks: Callbacks) !void {
         const self = panel.minibuffer;
 
         if (self.prompt) |existing_prompt| {
@@ -189,7 +194,7 @@ pub const MiniBuffer = struct {
         }
 
         self.prompt = try self.allocator.dupe(u8, prompt);
-        self.callback = callback;
+        self.callbacks = callbacks;
 
         self.resetContent();
         panel.minibuffer_active = true;
@@ -208,6 +213,10 @@ pub const MiniBuffer = struct {
         var text_bytes = try std.unicode.utf8Encode(@intCast(u21, codepoint), &text);
         try self.insert(text[0..text_bytes], self.cursor);
         self.cursor += 1;
+
+        if (self.callbacks.on_change) |on_change| {
+            try on_change(panel, self.text.items);
+        }
     }
 
     pub fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!void {
@@ -216,10 +225,14 @@ pub const MiniBuffer = struct {
             .@"<esc>" => {
                 self.resetContent();
                 panel.minibuffer_active = false;
+
+                if (self.callbacks.on_cancel) |on_cancel| {
+                    try on_cancel(panel, self.text.items);
+                }
             },
             .@"<enter>" => {
-                if (self.callback) |callback| {
-                    try callback(panel, self.text.items);
+                if (self.callbacks.on_confirm) |on_confirm| {
+                    try on_confirm(panel, self.text.items);
                 }
 
                 self.resetContent();
@@ -229,10 +242,21 @@ pub const MiniBuffer = struct {
                 if (self.cursor > 0) {
                     self.cursor -= 1;
                     try self.delete(self.cursor, 1);
+
+                    if (self.callbacks.on_change) |on_change| {
+                        try on_change(panel, self.text.items);
+                    }
                 }
             },
             .@"<delete>" => {
-                try self.delete(self.cursor, 1);
+                const text_length = try std.unicode.utf8CountCodepoints(self.text.items);
+                if (self.cursor < text_length) {
+                    try self.delete(self.cursor, 1);
+
+                    if (self.callbacks.on_change) |on_change| {
+                        try on_change(panel, self.text.items);
+                    }
+                }
             },
             .@"<left>" => {
                 if (self.cursor > 0) self.cursor -= 1;

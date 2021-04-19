@@ -207,7 +207,9 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind(":", struct {
         fn callback(panel: *Panel, args: []const u8) anyerror!void {
-            try MiniBuffer.activate(panel, ":", commandHandler);
+            try MiniBuffer.activate(panel, ":", .{
+                .on_confirm = commandHandler,
+            });
         }
     }.callback);
 }
