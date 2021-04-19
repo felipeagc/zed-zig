@@ -355,7 +355,7 @@ pub const BufferPanel = struct {
             const cursor_line_content = try self.buffer.getLine(cursor.line);
             const cursor_line_length = try std.unicode.utf8CountCodepoints(cursor_line_content);
 
-            var cursor_x: i32 = 0;
+            var cursor_x: i32 = rect.x;
             const cursor_y = rect.y - @floatToInt(
                 i32,
                 std.math.floor(scroll_y * @intToFloat(f64, char_height)),
