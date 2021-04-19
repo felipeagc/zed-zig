@@ -36,9 +36,16 @@ pub fn build(b: *std.build.Builder) void {
 
     const tests = [_]*std.build.LibExeObjStep{
         b.addTest("src/buffer.zig"),
+        b.addTest("src/minibuffer.zig"),
     };
     for (tests) |test_| {
+        test_.linkLibC();
         test_.setBuildMode(mode);
+        test_.linkSystemLibrary("glfw");
+        test_.linkSystemLibrary("epoxy");
+        test_.linkSystemLibrary("oniguruma");
+        test_.linkSystemLibrary("fontconfig");
+        test_.linkSystemLibrary("freetype");
         test_step.dependOn(&test_.step);
     }
 }

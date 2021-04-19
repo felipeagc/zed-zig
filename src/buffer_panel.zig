@@ -131,7 +131,7 @@ const Position = struct {
 };
 
 pub const BufferPanel = struct {
-    panel: editor.Panel = .{ .vt = &VT },
+    panel: editor.Panel,
     allocator: *Allocator,
     buffer: *Buffer,
     mode: Mode = .normal,
@@ -144,6 +144,7 @@ pub const BufferPanel = struct {
     pub fn init(allocator: *Allocator, buffer: *Buffer) !*editor.Panel {
         var self = try allocator.create(BufferPanel);
         self.* = @This(){
+            .panel = try editor.Panel.init(allocator, &VT),
             .allocator = allocator,
             .buffer = buffer,
         };
@@ -425,6 +426,7 @@ pub const BufferPanel = struct {
 
     fn deinit(panel: *editor.Panel) void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        self.panel.deinit();
         self.allocator.destroy(self);
     }
 
@@ -803,6 +805,12 @@ pub const BufferPanel = struct {
                 }
             }
         }
+    }
+
+    fn insertModeDelete(panel: *editor.Panel, args: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        try self.fixupCursor();
+        try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
     }
 
     fn insertModeInsertNewLine(panel: *editor.Panel, args: []const u8) anyerror!void {
@@ -1301,6 +1309,7 @@ pub const BufferPanel = struct {
         try insert_key_map.bind("<up>", insertModeMoveUp);
         try insert_key_map.bind("<down>", insertModeMoveDown);
         try insert_key_map.bind("<backspace>", insertModeBackspace);
+        try insert_key_map.bind("<delete>", insertModeDelete);
         try insert_key_map.bind("<enter>", insertModeInsertNewLine);
         try insert_key_map.bind("<tab>", insertModeInsertTab);
 

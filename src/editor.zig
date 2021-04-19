@@ -2,6 +2,7 @@ const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const Allocator = std.mem.Allocator;
 const KeyMap = @import("keymap.zig").KeyMap;
+const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
 
 pub const EditorOptions = struct {
     main_font: *renderer.Font,
@@ -10,6 +11,7 @@ pub const EditorOptions = struct {
     expandtab: bool = true,
     scroll_margin: u32 = 5,
     status_line_padding: u32 = 4,
+    minibuffer_line_padding: u32 = 4,
     border_size: u32 = 1,
 };
 
@@ -50,6 +52,39 @@ pub const PanelVT = struct {
 
 pub const Panel = struct {
     vt: *const PanelVT,
+    minibuffer: *MiniBuffer,
+    minibuffer_active: bool = false,
+
+    pub fn init(allocator: *Allocator, vt: *const PanelVT) !Panel {
+        return Panel{
+            .vt = vt,
+            .minibuffer = try MiniBuffer.init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *Panel) void {
+        self.minibuffer.deinit();
+    }
+
+    pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!void {
+        if (panel.minibuffer_active) {
+            try MiniBuffer.onKey(panel, key, mods);
+        } else {
+            if (panel.vt.on_key) |panel_on_key| {
+                try panel_on_key(panel, key, mods);
+            }
+        }
+    }
+
+    pub fn onChar(panel: *Panel, codepoint: u32) anyerror!void {
+        if (panel.minibuffer_active) {
+            try MiniBuffer.onChar(panel, codepoint);
+        } else {
+            if (panel.vt.on_char) |panel_on_char| {
+                try panel_on_char(panel, codepoint);
+            }
+        }
+    }
 };
 
 var g_editor: Editor = undefined;
@@ -63,11 +98,9 @@ fn onKey(key: renderer.Key, mods: u32) void {
     };
 
     if (!got_binding) {
-        if (panel.vt.on_key) |panel_on_key| {
-            panel_on_key(panel, key, mods) catch |err| {
-                std.log.info("onKey error: {}", .{err});
-            };
-        }
+        panel.onKey(key, mods) catch |err| {
+            std.log.info("onKey error: {}", .{err});
+        };
     }
 }
 
@@ -80,11 +113,9 @@ fn onChar(codepoint: u32) void {
     };
 
     if (!got_binding) {
-        if (panel.vt.on_char) |panel_on_char| {
-            panel_on_char(panel, codepoint) catch |err| {
-                std.log.info("onChar error: {}", .{err});
-            };
-        }
+        panel.onChar(codepoint) catch |err| {
+            std.log.info("onChar error: {}", .{err});
+        };
     }
 }
 
@@ -167,6 +198,13 @@ pub fn init(allocator: *Allocator) !void {
         fn callback(panel: *Panel, args: []const u8) anyerror!void {
             g_editor.selected_panel -%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
+        }
+    }.callback);
+
+    try g_editor.global_keymap.bind(":", struct {
+        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+            panel.minibuffer_active = true;
+            panel.minibuffer.resetContent();
         }
     }.callback);
 }
@@ -318,6 +356,11 @@ pub fn draw() !void {
             panel.vt.draw(panel, inner_rect) catch |err| {
                 std.log.warn("Panel draw error: {}", .{err});
             };
+            if (panel.minibuffer_active) {
+                panel.minibuffer.draw(inner_rect) catch |err| {
+                    std.log.warn("Minibuffer draw error: {}", .{err});
+                };
+            }
         }
 
         px += pw;

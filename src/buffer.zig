@@ -693,7 +693,7 @@ test "buffer" {
         \\second line
         \\
         \\olá mundo -- em português
-    );
+    , .{});
     defer buffer.deinit();
 
     {
@@ -825,7 +825,7 @@ test "buffer" {
     }
 
     {
-        var new_buffer = try buffer.clone();
+        var new_buffer = try buffer.clone(.{});
         defer new_buffer.deinit();
     }
 }

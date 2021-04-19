@@ -35,8 +35,10 @@ pub const SubMap = struct {
         self.allocator.destroy(self);
     }
 
-    fn trigger(self: *@This(), key: []const u8, panel: *editor.Panel) !?*SubMap {
+    fn trigger(self: *@This(), key: []const u8, panel: *editor.Panel, got_binding: *bool) !?*SubMap {
         if (self.map.get(key)) |binding| {
+            got_binding.* = true;
+
             switch (binding) {
                 .submap => |submap| {
                     return submap;
@@ -47,6 +49,8 @@ pub const SubMap = struct {
                 },
             }
         }
+
+        got_binding.* = false;
 
         return null;
     }
@@ -160,19 +164,20 @@ pub const KeyMap = struct {
         );
         defer self.allocator.free(key_combo);
 
-        var maybe_submap = self.current_submap.trigger(key_combo, panel) catch |err| {
+        var got_binding = false;
+        var maybe_submap = self.current_submap.trigger(key_combo, panel, &got_binding) catch |err| {
             self.current_submap = self.root_submap;
             std.log.info("onKey error: {}", .{err});
-            return false;
+            return got_binding;
         };
 
         if (maybe_submap) |next_submap| {
             self.current_submap = next_submap;
-            return true;
+        } else {
+            self.current_submap = self.root_submap;
         }
 
-        self.current_submap = self.root_submap;
-        return false;
+        return got_binding;
     }
 
     pub fn onChar(self: *@This(), codepoint: u32, panel: *editor.Panel) !bool {
@@ -191,19 +196,20 @@ pub const KeyMap = struct {
             return false;
         }
 
-        var maybe_submap = self.current_submap.trigger(key_name, panel) catch |err| {
+        var got_binding = false;
+        var maybe_submap = self.current_submap.trigger(key_name, panel, &got_binding) catch |err| {
             self.current_submap = self.root_submap;
             std.log.info("onChar error: {}", .{err});
-            return false;
+            return got_binding;
         };
 
         if (maybe_submap) |next_submap| {
             self.current_submap = next_submap;
-            return true;
+        } else {
+            self.current_submap = self.root_submap;
         }
 
-        self.current_submap = self.root_submap;
-        return false;
+        return got_binding;
     }
 
     pub fn bind(self: *@This(), sequence: []const u8, command: Command) !void {
