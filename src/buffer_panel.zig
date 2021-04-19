@@ -204,6 +204,13 @@ pub const BufferPanel = struct {
         };
     }
 
+    fn getLineY(self: *BufferPanel, line_index: usize, rect: *const renderer.Rect, char_height: i32) i32 {
+        return rect.y - @floatToInt(
+            i32,
+            std.math.floor(self.scroll_y.value * @intToFloat(f64, char_height)),
+        ) + (@intCast(i32, line_index) * char_height);
+    }
+
     fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
@@ -220,16 +227,16 @@ pub const BufferPanel = struct {
         const line_count = self.buffer.getLineCount();
         if (line_count == 0) return;
 
-        var first_line: isize = @floatToInt(isize, std.math.floor(scroll_y));
+        var first_line: usize = @floatToInt(usize, std.math.floor(scroll_y));
         if (first_line >= line_count) {
-            first_line = @intCast(isize, line_count) - 1;
+            first_line = @intCast(usize, line_count) - 1;
         }
 
-        var last_line: isize = @floatToInt(isize, std.math.floor(
+        var last_line: usize = @floatToInt(usize, std.math.floor(
             scroll_y + (@intToFloat(f64, rect.h) / @intToFloat(f64, char_height)),
         ));
         if (last_line >= line_count) {
-            last_line = @intCast(isize, line_count) - 1;
+            last_line = @intCast(usize, line_count) - 1;
         }
         last_line = std.math.max(first_line, last_line);
 
@@ -257,16 +264,15 @@ pub const BufferPanel = struct {
             renderer.setColor(editor.getFace("border").color);
 
             const first_position = getFirstPosition(cursor, self.mark);
-            const start_pos = if (first_position == 0) cursor else self.mark;
-            const end_pos = if (first_position == 1) cursor else self.mark;
+            var start_pos = if (first_position == 0) cursor else self.mark;
+            var end_pos = if (first_position == 1) cursor else self.mark;
+            start_pos.line = std.math.max(start_pos.line, if (first_line > 0) first_line - 1 else 0);
+            end_pos.line = std.math.min(end_pos.line, last_line + 1);
 
-            var current_line_index: isize = first_line;
-            while (current_line_index <= last_line) : (current_line_index += 1) {
-                const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
-                const line_y = rect.y - @floatToInt(
-                    i32,
-                    std.math.floor(scroll_y * @intToFloat(f64, char_height)),
-                ) + (@intCast(i32, current_line_index) * char_height);
+            var current_line_index = start_pos.line;
+            while (current_line_index <= end_pos.line) : (current_line_index += 1) {
+                const line = self.buffer.lines.items[current_line_index];
+                const line_y = self.getLineY(current_line_index, &rect, char_height);
 
                 var char_x = rect.x;
                 var char_index: usize = 0;
@@ -291,6 +297,15 @@ pub const BufferPanel = struct {
                     char_x += char_advance;
                     char_index += 1;
                 }
+
+                if (char_index == 0) {
+                    _ = try renderer.drawRect(renderer.Rect{
+                        .x = char_x,
+                        .y = line_y,
+                        .w = try font.getCharAdvance(font_size, ' '),
+                        .h = char_height,
+                    });
+                }
             }
         }
 
@@ -299,46 +314,42 @@ pub const BufferPanel = struct {
             renderer.setColor(editor.getFace("border").color);
 
             const first_position = getFirstPosition(cursor, self.mark);
-            const start_pos = if (first_position == 0) cursor else self.mark;
-            const end_pos = if (first_position == 1) cursor else self.mark;
+            var start_pos = if (first_position == 0) cursor else self.mark;
+            var end_pos = if (first_position == 1) cursor else self.mark;
+            start_pos.line = std.math.max(start_pos.line, if (first_line > 0) first_line - 1 else 0);
+            end_pos.line = std.math.min(end_pos.line, last_line + 1);
 
-            var current_line_index: isize = first_line;
-            while (current_line_index <= last_line) : (current_line_index += 1) {
-                if (@intCast(usize, current_line_index) >= start_pos.line and
-                    @intCast(usize, current_line_index) <= end_pos.line)
-                {
-                    const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
-                    const line_y = rect.y - @floatToInt(
-                        i32,
-                        std.math.floor(scroll_y * @intToFloat(f64, char_height)),
-                    ) + (@intCast(i32, current_line_index) * char_height);
+            var current_line_index = start_pos.line;
+            while (current_line_index <= end_pos.line) : (current_line_index += 1) {
+                const line = self.buffer.lines.items[current_line_index];
+                const line_y = self.getLineY(current_line_index, &rect, char_height);
 
-                    var line_advance: i32 = 0;
+                var line_advance: i32 = 0;
 
-                    var iter = std.unicode.Utf8View.initUnchecked(line.content.items).iterator();
-                    while (iter.nextCodepoint()) |codepoint| {
-                        line_advance += try font.getCharAdvance(font_size, codepoint);
-                    }
-
-                    _ = try renderer.drawRect(renderer.Rect{
-                        .x = rect.x,
-                        .y = line_y,
-                        .w = line_advance,
-                        .h = char_height,
-                    });
+                var iter = std.unicode.Utf8View.initUnchecked(line.content.items).iterator();
+                while (iter.nextCodepoint()) |codepoint| {
+                    line_advance += try font.getCharAdvance(font_size, codepoint);
                 }
+
+                if (line_advance == 0) {
+                    line_advance = try font.getCharAdvance(font_size, ' ');
+                }
+
+                _ = try renderer.drawRect(renderer.Rect{
+                    .x = rect.x,
+                    .y = line_y,
+                    .w = line_advance,
+                    .h = char_height,
+                });
             }
         }
 
         // Draw text
         renderer.setColor(editor.getFace("foreground").color);
-        var current_line_index: isize = first_line;
+        var current_line_index = first_line;
         while (current_line_index <= last_line) : (current_line_index += 1) {
-            const line = self.buffer.lines.items[@intCast(usize, current_line_index)];
-            const line_y = rect.y - @floatToInt(
-                i32,
-                std.math.floor(scroll_y * @intToFloat(f64, char_height)),
-            ) + (@intCast(i32, current_line_index) * char_height);
+            const line = self.buffer.lines.items[current_line_index];
+            const line_y = self.getLineY(current_line_index, &rect, char_height);
 
             _ = try renderer.drawText(
                 line.content.items,
