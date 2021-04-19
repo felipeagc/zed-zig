@@ -8,7 +8,11 @@ const Allocator = mem.Allocator;
 pub const MiniBuffer = struct {
     allocator: *Allocator,
     text: ArrayList(u8),
+    prompt: ?[]const u8 = null,
+    callback: ?Callback = null,
     cursor: usize = 0,
+
+    pub const Callback = fn (panel: *editor.Panel, text: []const u8) anyerror!void;
 
     pub fn init(allocator: *Allocator) !*MiniBuffer {
         const self = try allocator.create(MiniBuffer);
@@ -20,6 +24,9 @@ pub const MiniBuffer = struct {
     }
 
     pub fn deinit(self: *MiniBuffer) void {
+        if (self.prompt) |prompt| {
+            self.allocator.free(prompt);
+        }
         self.text.deinit();
         self.allocator.destroy(self);
     }
@@ -143,11 +150,25 @@ pub const MiniBuffer = struct {
         }
 
         renderer.setColor(editor.getFace("foreground").color);
+
+        const prompt_advance = if (self.prompt) |prompt| blk: {
+            break :blk try renderer.drawText(
+                prompt,
+                font,
+                font_size,
+                inner_rect.x + @intCast(i32, options.minibuffer_line_padding),
+                inner_rect.y + @intCast(i32, options.minibuffer_line_padding),
+                .{},
+            );
+        } else blk: {
+            break :blk 0;
+        };
+
         _ = try renderer.drawText(
             self.text.items,
             font,
             font_size,
-            inner_rect.x + @intCast(i32, options.minibuffer_line_padding),
+            prompt_advance + inner_rect.x + @intCast(i32, options.minibuffer_line_padding),
             inner_rect.y + @intCast(i32, options.minibuffer_line_padding),
             .{},
         );
@@ -155,9 +176,30 @@ pub const MiniBuffer = struct {
         try renderer.drawRect(.{
             .w = cursor_width,
             .h = char_height,
-            .x = inner_rect.x + @intCast(i32, options.minibuffer_line_padding) + cursor_advance,
+            .x = prompt_advance + inner_rect.x + @intCast(i32, options.minibuffer_line_padding) + cursor_advance,
             .y = inner_rect.y + @intCast(i32, options.minibuffer_line_padding),
         });
+    }
+
+    pub fn activate(panel: *editor.Panel, prompt: []const u8, callback: Callback) !void {
+        const self = panel.minibuffer;
+
+        if (self.prompt) |existing_prompt| {
+            self.allocator.free(existing_prompt);
+        }
+
+        self.prompt = try self.allocator.dupe(u8, prompt);
+        self.callback = callback;
+
+        self.resetContent();
+        panel.minibuffer_active = true;
+    }
+
+    pub fn deactivate(panel: *editor.Panel) void {
+        const self = panel.minibuffer;
+
+        panel.minibuffer_active = false;
+        self.resetContent();
     }
 
     pub fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!void {
@@ -176,7 +218,10 @@ pub const MiniBuffer = struct {
                 panel.minibuffer_active = false;
             },
             .@"<enter>" => {
-                std.log.info("execute command: {s}", .{self.text.items});
+                if (self.callback) |callback| {
+                    try callback(panel, self.text.items);
+                }
+
                 self.resetContent();
                 panel.minibuffer_active = false;
             },

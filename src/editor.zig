@@ -12,7 +12,7 @@ pub const EditorOptions = struct {
     scroll_margin: u32 = 5,
     status_line_padding: u32 = 4,
     minibuffer_line_padding: u32 = 4,
-    border_size: u32 = 1,
+    border_size: u32 = 3,
 };
 
 const Face = struct {
@@ -128,6 +128,10 @@ fn onScroll(dx: f64, dy: f64) void {
     }
 }
 
+fn commandHandler(panel: *Panel, command: []const u8) anyerror!void {
+    std.log.info("executing command: {s}", .{command});
+}
+
 pub fn init(allocator: *Allocator) !void {
     try renderer.init(allocator, .{
         .on_key_callback = onKey,
@@ -203,8 +207,7 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind(":", struct {
         fn callback(panel: *Panel, args: []const u8) anyerror!void {
-            panel.minibuffer_active = true;
-            panel.minibuffer.resetContent();
+            try MiniBuffer.activate(panel, ":", commandHandler);
         }
     }.callback);
 }
