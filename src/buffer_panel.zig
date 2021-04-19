@@ -116,6 +116,7 @@ pub const VT = editor.PanelVT{
 
     .draw = BufferPanel.draw,
     .get_status_line = BufferPanel.getStatusLine,
+    .clone = BufferPanel.clone,
     .deinit = BufferPanel.deinit,
 
     .on_key = BufferPanel.onKey,
@@ -425,9 +426,19 @@ pub const BufferPanel = struct {
         }
     }
 
+    fn clone(panel: *editor.Panel) anyerror!*editor.Panel {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        var cloned = try self.allocator.create(BufferPanel);
+        errdefer self.allocator.destroy(cloned);
+
+        cloned.* = self.*;
+        cloned.panel = try editor.Panel.init(self.allocator, &VT);
+
+        return &cloned.panel;
+    }
+
     fn deinit(panel: *editor.Panel) void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        self.panel.deinit();
         self.allocator.destroy(self);
     }
 

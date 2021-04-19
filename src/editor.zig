@@ -3,6 +3,8 @@ const renderer = @import("opengl_renderer.zig");
 const Allocator = std.mem.Allocator;
 const KeyMap = @import("keymap.zig").KeyMap;
 const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
+const Buffer = @import("buffer.zig").Buffer;
+const BufferPanel = @import("buffer_panel.zig").BufferPanel;
 
 pub const EditorOptions = struct {
     main_font: *renderer.Font,
@@ -32,6 +34,8 @@ const Editor = struct {
     panels: std.ArrayList(*Panel),
     selected_panel: usize = 0,
 
+    buffers: std.ArrayList(*Buffer),
+
     global_keymap: KeyMap,
 };
 
@@ -40,6 +44,7 @@ pub const PanelVT = struct {
 
     get_status_line: fn (self: *Panel, allocator: *Allocator) anyerror![]const u8,
     draw: fn (self: *Panel, rect: renderer.Rect) anyerror!void,
+    clone: fn (self: *Panel) anyerror!*Panel,
     deinit: fn (self: *Panel) void,
 
     on_key: ?fn (self: *Panel, key: renderer.Key, mods: u32) anyerror!void = null,
@@ -64,6 +69,11 @@ pub const Panel = struct {
 
     pub fn deinit(self: *Panel) void {
         self.minibuffer.deinit();
+        self.vt.deinit(self);
+    }
+
+    pub fn clone(self: *Panel) !*Panel {
+        return self.vt.clone(self);
     }
 
     pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!void {
@@ -152,6 +162,7 @@ pub fn init(allocator: *Allocator) !void {
         .panel_vt_map = std.StringHashMap(usize).init(allocator),
 
         .panels = std.ArrayList(*Panel).init(allocator),
+        .buffers = std.ArrayList(*Buffer).init(allocator),
 
         .global_keymap = try KeyMap.init(allocator),
     };
@@ -212,11 +223,41 @@ pub fn init(allocator: *Allocator) !void {
             });
         }
     }.callback);
+
+    try g_editor.global_keymap.bind("C-/", struct {
+        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+            try g_editor.panels.insert(g_editor.selected_panel + 1, try panel.clone());
+        }
+    }.callback);
+
+    try g_editor.global_keymap.bind("C-w", struct {
+        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+            if (g_editor.panels.items.len > 1) {
+                const removed_panel = g_editor.panels.orderedRemove(g_editor.selected_panel);
+                removed_panel.deinit();
+
+                g_editor.selected_panel = std.math.min(g_editor.selected_panel, g_editor.panels.items.len - 1);
+            }
+        }
+    }.callback);
+
+    const scratch_buffer = try Buffer.initWithContent(
+        g_editor.allocator,
+        "",
+        .{ .name = "** scratch **" },
+    );
+    try g_editor.buffers.append(scratch_buffer);
+
+    try g_editor.panels.append(try BufferPanel.init(g_editor.allocator, scratch_buffer));
 }
 
 pub fn deinit() void {
     for (g_editor.panels.items) |panel| {
-        panel.vt.deinit(panel);
+        panel.deinit();
+    }
+
+    for (g_editor.buffers.items) |buffer| {
+        buffer.deinit();
     }
 
     for (g_editor.panel_vts.items) |panel_vt| {
@@ -227,6 +268,7 @@ pub fn deinit() void {
 
     g_editor.global_keymap.deinit();
     g_editor.panels.deinit();
+    g_editor.buffers.deinit();
     g_editor.options.main_font.deinit();
     g_editor.face_map.deinit();
     g_editor.faces.deinit();
@@ -282,8 +324,11 @@ fn registerPanelVT(vt: *const PanelVT) !void {
     }
 }
 
-pub fn addPanel(panel: *Panel) !void {
-    try g_editor.panels.append(panel);
+pub fn isPanelSelected(panel: *Panel) bool {
+    for (g_editor.panels.items) |other_panel, i| {
+        if (panel == other_panel) return i == g_editor.selected_panel;
+    }
+    return false;
 }
 
 pub fn draw() !void {
