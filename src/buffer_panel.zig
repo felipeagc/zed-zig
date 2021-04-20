@@ -1235,7 +1235,69 @@ pub const BufferPanel = struct {
 
         const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
 
+        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        defer self.allocator.free(content);
+        try renderer.setClipboardString(content);
+
         try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
+
+        self.cursor = start_pos;
+
+        self.mode = .normal;
+        try self.fixupCursor();
+    }
+
+    fn visualModeYank(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        const cursor = try self.getFixedCursorPos();
+
+        const first_position = getFirstPosition(cursor, self.mark);
+        const start_pos = if (first_position == 0) cursor else self.mark;
+        const end_pos = if (first_position == 1) cursor else self.mark;
+
+        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+
+        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        defer self.allocator.free(content);
+        try renderer.setClipboardString(content);
+
+        self.cursor = start_pos;
+
+        self.mode = .normal;
+        try self.fixupCursor();
+    }
+
+    fn visualModePaste(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const maybe_pasted_content = try renderer.getClipboardString(self.allocator);
+        defer if (maybe_pasted_content) |pasted_content| {
+            self.allocator.free(pasted_content);
+        };
+
+        const pasted_content = maybe_pasted_content orelse "";
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        const cursor = try self.getFixedCursorPos();
+
+        const first_position = getFirstPosition(cursor, self.mark);
+        const start_pos = if (first_position == 0) cursor else self.mark;
+        const end_pos = if (first_position == 1) cursor else self.mark;
+
+        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+
+        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        defer self.allocator.free(content);
+        try renderer.setClipboardString(content);
+
+        try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
+        try self.buffer.insert(pasted_content, start_pos.line, start_pos.column);
 
         self.cursor = start_pos;
 
@@ -1262,7 +1324,76 @@ pub const BufferPanel = struct {
 
         const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
 
+        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        defer self.allocator.free(content);
+        try renderer.setClipboardString(content);
+
         try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
+
+        self.cursor = start_pos;
+
+        self.mode = .normal;
+        try self.fixupCursor();
+    }
+
+    fn visualLineModeYank(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const cursor = try self.getFixedCursorPos();
+
+        const first_position = getFirstPosition(cursor, self.mark);
+        var start_pos = if (first_position == 0) cursor else self.mark;
+        var end_pos = if (first_position == 1) cursor else self.mark;
+
+        start_pos.column = 0;
+
+        const end_line = try self.buffer.getLine(end_pos.line);
+        end_pos.column = try std.unicode.utf8CountCodepoints(end_line);
+
+        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+
+        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        defer self.allocator.free(content);
+        try renderer.setClipboardString(content);
+
+        self.cursor = start_pos;
+
+        self.mode = .normal;
+        try self.fixupCursor();
+    }
+
+    fn visualLineModePaste(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const maybe_pasted_content = try renderer.getClipboardString(self.allocator);
+        defer if (maybe_pasted_content) |pasted_content| {
+            self.allocator.free(pasted_content);
+        };
+
+        const pasted_content = maybe_pasted_content orelse "";
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        const cursor = try self.getFixedCursorPos();
+
+        const first_position = getFirstPosition(cursor, self.mark);
+        var start_pos = if (first_position == 0) cursor else self.mark;
+        var end_pos = if (first_position == 1) cursor else self.mark;
+
+        start_pos.column = 0;
+
+        const end_line = try self.buffer.getLine(end_pos.line);
+        end_pos.column = try std.unicode.utf8CountCodepoints(end_line);
+
+        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+
+        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        defer self.allocator.free(content);
+        try renderer.setClipboardString(content);
+
+        try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
+        try self.buffer.insert(pasted_content, start_pos.line, start_pos.column);
 
         self.cursor = start_pos;
 
@@ -1376,10 +1507,14 @@ pub const BufferPanel = struct {
         try visual_key_map.bind("<esc>", exitVisualMode);
         try visual_key_map.bind("v", exitVisualMode);
         try visual_key_map.bind("d", visualModeDelete);
+        try visual_key_map.bind("y", visualModeYank);
+        try visual_key_map.bind("p", visualModePaste);
 
         try visual_line_key_map.bind("<esc>", exitVisualLineMode);
         try visual_line_key_map.bind("V", exitVisualLineMode);
         try visual_line_key_map.bind("d", visualLineModeDelete);
+        try visual_line_key_map.bind("y", visualLineModeYank);
+        try visual_line_key_map.bind("p", visualLineModePaste);
 
         try command_registry.register("w", commandWriteFile);
         try command_registry.register("e", commandEditFile);
