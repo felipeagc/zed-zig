@@ -57,7 +57,7 @@ pub const Buffer = struct {
     undo_stack: ArrayList(TextOp),
     redo_stack: ArrayList(TextOp),
     name: []const u8,
-    path: ?[]const u8,
+    absolute_path: ?[]const u8,
 
     pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
         var self = try allocator.create(@This());
@@ -67,7 +67,7 @@ pub const Buffer = struct {
             .undo_stack = ArrayList(TextOp).init(allocator),
             .redo_stack = ArrayList(TextOp).init(allocator),
             .name = try allocator.dupe(u8, options.name orelse "** unnamed buffer **"),
-            .path = if (options.path) |path| try std.fs.realpathAlloc(allocator, path) else null,
+            .absolute_path = if (options.path) |path| try std.fs.realpathAlloc(allocator, path) else null,
         };
 
         errdefer self.deinit();
@@ -137,6 +137,22 @@ pub const Buffer = struct {
         return new_buffer;
     }
 
+    pub fn save(self: *@This()) !void {
+        if (self.absolute_path) |path| {
+            var file = try std.fs.openFileAbsolute(path, .{ .write = true });
+            defer file.close();
+
+            const content = try self.getEntireContent(self.allocator);
+            defer self.allocator.free(content);
+
+            try file.writeAll(content);
+
+            std.log.info("Wrote: {s}", .{path});
+        } else {
+            return error.BufferNoPathSpecified;
+        }
+    }
+
     pub fn getLineCount(self: *@This()) usize {
         return self.lines.items.len;
     }
@@ -178,7 +194,7 @@ pub const Buffer = struct {
         }
 
         self.allocator.free(self.name);
-        if (self.path) |path| {
+        if (self.absolute_path) |path| {
             self.allocator.free(path);
         }
         self.undo_stack.deinit();

@@ -3,11 +3,9 @@ const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Command = fn (panel: *editor.Panel, args: []const u8) anyerror!void;
-
 pub const Binding = union(enum) {
     submap: *SubMap,
-    command: Command,
+    command: editor.Command,
 };
 
 pub const SubMap = struct {
@@ -44,7 +42,7 @@ pub const SubMap = struct {
                     return submap;
                 },
                 .command => |command| {
-                    try command(panel, "");
+                    try command(panel, &[_][]const u8{});
                     return null;
                 },
             }
@@ -60,7 +58,7 @@ pub const SubMap = struct {
             if (binding == .command) {
                 var bytes = [4]u8{ 0, 0, 0, 0 };
                 const byte_length = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
-                try binding.command(panel, bytes[0..byte_length]);
+                try binding.command(panel, &[_][]const u8{bytes[0..byte_length]});
                 return true;
             }
         }
@@ -212,7 +210,7 @@ pub const KeyMap = struct {
         return got_binding;
     }
 
-    pub fn bind(self: *@This(), sequence: []const u8, command: Command) !void {
+    pub fn bind(self: *@This(), sequence: []const u8, command: editor.Command) !void {
         var submap = self.root_submap;
 
         var split_iter = std.mem.split(sequence, " ");

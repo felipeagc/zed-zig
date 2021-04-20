@@ -6,6 +6,8 @@ const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
 const Buffer = @import("buffer.zig").Buffer;
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
 
+pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
+
 pub const EditorOptions = struct {
     main_font: *renderer.Font,
     main_font_size: u32 = 18,
@@ -34,8 +36,7 @@ const Editor = struct {
     panels: std.ArrayList(*Panel),
     selected_panel: usize = 0,
 
-    buffers: std.ArrayList(*Buffer),
-
+    global_commands: CommandRegistry,
     global_keymap: KeyMap,
 };
 
@@ -53,6 +54,8 @@ pub const PanelVT = struct {
 
     register_vt: ?fn (allocator: *Allocator) anyerror!void = null,
     unregister_vt: ?fn () void = null,
+
+    command_registry: ?*CommandRegistry = null,
 };
 
 pub const Panel = struct {
@@ -97,6 +100,28 @@ pub const Panel = struct {
     }
 };
 
+pub const CommandRegistry = struct {
+    commands: std.StringArrayHashMap(Command),
+
+    pub fn init(allocator: *Allocator) CommandRegistry {
+        return CommandRegistry{
+            .commands = std.StringArrayHashMap(Command).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *CommandRegistry) void {
+        self.commands.deinit();
+    }
+
+    pub fn register(self: *CommandRegistry, name: []const u8, command: Command) !void {
+        try self.commands.put(name, command);
+    }
+
+    pub fn get(self: *CommandRegistry, name: []const u8) ?Command {
+        return self.commands.get(name);
+    }
+};
+
 var g_editor: Editor = undefined;
 
 fn onKey(key: renderer.Key, mods: u32) void {
@@ -138,8 +163,44 @@ fn onScroll(dx: f64, dy: f64) void {
     }
 }
 
-fn commandHandler(panel: *Panel, command: []const u8) anyerror!void {
-    std.log.info("executing command: {s}", .{command});
+fn commandHandler(panel: *Panel, command_string: []const u8) anyerror!void {
+    var parts = std.ArrayList([]const u8).init(g_editor.allocator);
+    defer parts.deinit();
+
+    var iter = std.mem.split(command_string, " ");
+    while (iter.next()) |part| {
+        try parts.append(part);
+    }
+
+    if (parts.items.len == 0) return;
+
+    const command_name = parts.items[0];
+    const args = parts.items[1..];
+
+    if (g_editor.global_commands.get(command_name)) |command| {
+        command(panel, args) catch |err| {
+            std.log.warn("error executing command: {}", .{err});
+        };
+    } else if (panel.vt.command_registry) |panel_command_registry| {
+        if (panel_command_registry.get(command_name)) |command| {
+            command(panel, args) catch |err| {
+                std.log.warn("error executing command: {}", .{err});
+            };
+        }
+    }
+}
+
+fn commandNewSplit(panel: *Panel, args: [][]const u8) anyerror!void {
+    try g_editor.panels.insert(g_editor.selected_panel + 1, try panel.clone());
+}
+
+fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
+    if (g_editor.panels.items.len > 1) {
+        const removed_panel = g_editor.panels.orderedRemove(g_editor.selected_panel);
+        removed_panel.deinit();
+
+        g_editor.selected_panel = std.math.min(g_editor.selected_panel, g_editor.panels.items.len - 1);
+    }
 }
 
 pub fn init(allocator: *Allocator) !void {
@@ -162,9 +223,9 @@ pub fn init(allocator: *Allocator) !void {
         .panel_vt_map = std.StringHashMap(usize).init(allocator),
 
         .panels = std.ArrayList(*Panel).init(allocator),
-        .buffers = std.ArrayList(*Buffer).init(allocator),
 
         .global_keymap = try KeyMap.init(allocator),
+        .global_commands = CommandRegistry.init(allocator),
     };
 
     try setFace("foreground", .{ 0xff, 0xff, 0xff });
@@ -181,7 +242,7 @@ pub fn init(allocator: *Allocator) !void {
     try registerPanelVT(&@import("buffer_panel.zig").VT);
 
     try g_editor.global_keymap.bind("C-=", struct {
-        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+        fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
             g_editor.options.main_font_size +%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -192,7 +253,7 @@ pub fn init(allocator: *Allocator) !void {
     }.callback);
 
     try g_editor.global_keymap.bind("C--", struct {
-        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+        fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
             g_editor.options.main_font_size -%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -203,61 +264,37 @@ pub fn init(allocator: *Allocator) !void {
     }.callback);
 
     try g_editor.global_keymap.bind("C-j", struct {
-        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+        fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
             g_editor.selected_panel +%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
     }.callback);
 
     try g_editor.global_keymap.bind("C-k", struct {
-        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+        fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
             g_editor.selected_panel -%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
     }.callback);
 
     try g_editor.global_keymap.bind(":", struct {
-        fn callback(panel: *Panel, args: []const u8) anyerror!void {
+        fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
             try MiniBuffer.activate(panel, ":", .{
                 .on_confirm = commandHandler,
             });
         }
     }.callback);
 
-    try g_editor.global_keymap.bind("C-/", struct {
-        fn callback(panel: *Panel, args: []const u8) anyerror!void {
-            try g_editor.panels.insert(g_editor.selected_panel + 1, try panel.clone());
-        }
-    }.callback);
+    try g_editor.global_keymap.bind("C-/", commandNewSplit);
+    try g_editor.global_keymap.bind("C-w", commandCloseSplit);
 
-    try g_editor.global_keymap.bind("C-w", struct {
-        fn callback(panel: *Panel, args: []const u8) anyerror!void {
-            if (g_editor.panels.items.len > 1) {
-                const removed_panel = g_editor.panels.orderedRemove(g_editor.selected_panel);
-                removed_panel.deinit();
-
-                g_editor.selected_panel = std.math.min(g_editor.selected_panel, g_editor.panels.items.len - 1);
-            }
-        }
-    }.callback);
-
-    const scratch_buffer = try Buffer.initWithContent(
-        g_editor.allocator,
-        "",
-        .{ .name = "** scratch **" },
-    );
-    try g_editor.buffers.append(scratch_buffer);
-
-    try g_editor.panels.append(try BufferPanel.init(g_editor.allocator, scratch_buffer));
+    try g_editor.global_commands.register("vsp", commandNewSplit);
+    try g_editor.global_commands.register("q", commandCloseSplit);
 }
 
 pub fn deinit() void {
     for (g_editor.panels.items) |panel| {
         panel.deinit();
-    }
-
-    for (g_editor.buffers.items) |buffer| {
-        buffer.deinit();
     }
 
     for (g_editor.panel_vts.items) |panel_vt| {
@@ -267,8 +304,8 @@ pub fn deinit() void {
     }
 
     g_editor.global_keymap.deinit();
+    g_editor.global_commands.deinit();
     g_editor.panels.deinit();
-    g_editor.buffers.deinit();
     g_editor.options.main_font.deinit();
     g_editor.face_map.deinit();
     g_editor.faces.deinit();
@@ -312,6 +349,10 @@ pub fn getFaceIndex(name: []const u8) usize {
     }
 
     return 0;
+}
+
+pub fn addPanel(panel: *Panel) !void {
+    try g_editor.panels.append(panel);
 }
 
 fn registerPanelVT(vt: *const PanelVT) !void {
