@@ -679,7 +679,9 @@ pub const Buffer = struct {
                 column_index += 1;
             }
 
-            distance += 1; // new line character
+            if (line_index != start_line or column_index != start_column) {
+                distance += 1; // new line character
+            }
         }
 
         return distance;
@@ -844,4 +846,18 @@ test "buffer" {
         var new_buffer = try buffer.clone(.{});
         defer new_buffer.deinit();
     }
+}
+
+test "buffer2" {
+    const allocator = std.testing.allocator;
+    const expect = std.testing.expect;
+
+    var buffer = try Buffer.initWithContent(allocator,
+        \\
+        \\a
+        \\}
+    , .{});
+    defer buffer.deinit();
+
+    expect((try buffer.getCodepointDistance(0, 0, 1, 1)) == 2);
 }
