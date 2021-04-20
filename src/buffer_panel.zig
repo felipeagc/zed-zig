@@ -656,6 +656,9 @@ pub const BufferPanel = struct {
 
     fn enterInsertModeBefore(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.fixupCursor();
+
         self.mode = .insert;
 
         self.beginCheckpoint();
@@ -665,6 +668,9 @@ pub const BufferPanel = struct {
 
     fn enterInsertModeAfter(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.fixupCursor();
+
         self.mode = .insert;
 
         self.beginCheckpoint();
@@ -675,6 +681,9 @@ pub const BufferPanel = struct {
 
     fn enterInsertModeEndOfLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.fixupCursor();
+
         self.mode = .insert;
 
         self.beginCheckpoint();
@@ -685,6 +694,9 @@ pub const BufferPanel = struct {
 
     fn enterInsertModeBeginningOfLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.fixupCursor();
+
         self.mode = .insert;
 
         self.beginCheckpoint();
@@ -695,6 +707,8 @@ pub const BufferPanel = struct {
 
     fn enterInsertModeNextLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.fixupCursor();
 
         self.beginCheckpoint();
 
@@ -711,6 +725,8 @@ pub const BufferPanel = struct {
 
     fn enterInsertModePrevLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        try self.fixupCursor();
 
         self.beginCheckpoint();
 
