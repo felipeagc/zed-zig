@@ -4,6 +4,7 @@ const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
 const Buffer = @import("buffer.zig").Buffer;
+const args_parser = @import("args.zig");
 
 const GlobalAllocator = struct {
     const Internal = if (builtin.mode == .Debug) std.heap.GeneralPurposeAllocator(.{}) else struct {};
@@ -33,6 +34,19 @@ pub fn main() anyerror!void {
 
     try editor.init(allocator);
     defer editor.deinit();
+
+    const options = try args_parser.parseForCurrentProcess(struct{}, allocator);
+    defer options.deinit();
+
+    if (options.positionals.len > 0) {
+        for (options.positionals) |path| {
+            const buffer = BufferPanel.addBufferFromFile(allocator, path) catch |err| {
+                std.log.info("Failed to open buffer: {s}", .{path});
+                continue;
+            };
+            try editor.addPanel(try BufferPanel.init(allocator, buffer));
+        }
+    }
 
     editor.mainLoop();
 }

@@ -1,9 +1,7 @@
 const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
-
-pub fn fromVoidPtr(comptime T: type, ptr: *c_void) T {
-    return @ptrCast(T, @alignCast(@alignOf(T), ptr));
-}
+const mem = std.mem;
+const Allocator = mem.Allocator;
 
 pub fn Animation(comptime T: type) type {
     return struct {
@@ -28,4 +26,23 @@ pub fn Animation(comptime T: type) type {
             }
         }
     };
+}
+
+pub fn normalizePath(allocator: *Allocator, path: []const u8) ![]const u8 {
+    var actual_path = path;
+    defer if (actual_path.ptr != path.ptr) {
+        allocator.free(actual_path);
+    };
+
+    if (mem.startsWith(u8, path, "~")) {
+        if (std.os.getenv("HOME")) |home_path| {
+            actual_path = try mem.concat(
+                allocator,
+                u8,
+                &[_][]const u8{ home_path, path[1..] },
+            );
+        }
+    }
+
+    return try std.fs.realpathAlloc(allocator, actual_path);
 }

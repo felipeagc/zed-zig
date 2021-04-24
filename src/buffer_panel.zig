@@ -23,6 +23,8 @@ const CharClass = enum {
     other,
 };
 
+const SCRATCH_BUFFER_NAME = "** scratch **";
+
 fn codepointToCharClass(codepoint: u32) CharClass {
     return if (codepoint > 0x07f)
         CharClass.alphanum
@@ -157,6 +159,23 @@ pub const BufferPanel = struct {
             .buffer = buffer,
         };
         return &self.panel;
+    }
+
+    pub fn addBufferFromFile(allocator: *Allocator, path: []const u8) !*Buffer {
+        const actual_path = try util.normalizePath(allocator, path);
+        defer allocator.free(actual_path);
+
+        for (g_buffers.items) |buffer| {
+            if (buffer.absolute_path) |buffer_path| {
+                if (mem.eql(u8, buffer_path, actual_path)) {
+                    return buffer;
+                }
+            }
+        }
+
+        const buffer = try Buffer.initFromFile(allocator, actual_path);
+        try g_buffers.append(buffer);
+        return buffer;
     }
 
     fn scrollToCursor(self: *BufferPanel) void {
@@ -1417,8 +1436,14 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn bufferForwardSearchConfirm(panel: *editor.Panel, text: []const u8) anyerror!void {
+        std.log.info("Searched for: {s}", .{text});
+    }
+
     fn normalModeForwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
-        try MiniBuffer.activate(panel, "/", .{});
+        try MiniBuffer.activate(panel, "/", .{
+            .on_confirm = bufferForwardSearchConfirm,
+        });
     }
 
     fn normalModeBackwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
@@ -1443,8 +1468,7 @@ pub const BufferPanel = struct {
 
         const path = args[0];
 
-        if (Buffer.initFromFile(self.allocator, path)) |new_buffer| {
-            try g_buffers.append(new_buffer);
+        if (BufferPanel.addBufferFromFile(self.allocator, path)) |new_buffer| {
             self.buffer = new_buffer;
         } else |err| {
             std.log.info("Failed to open buffer: {s}", .{path});
@@ -1534,15 +1558,6 @@ pub const BufferPanel = struct {
 
         try command_registry.register("w", commandWriteFile);
         try command_registry.register("e", commandEditFile);
-
-        const scratch_buffer = try Buffer.initWithContent(
-            allocator,
-            "",
-            .{ .name = "** scratch **" },
-        );
-        try g_buffers.append(scratch_buffer);
-
-        try editor.addPanel(try BufferPanel.init(allocator, scratch_buffer));
     }
 
     fn unregisterVT() void {
@@ -1556,5 +1571,23 @@ pub const BufferPanel = struct {
         normal_key_map.deinit();
         command_registry.deinit();
         g_buffers.deinit();
+    }
+
+    pub fn getScratchBuffer(allocator: *Allocator) !*Buffer {
+        for (g_buffers.items) |buffer| {
+            if (mem.eql(u8, buffer.name, SCRATCH_BUFFER_NAME)) {
+                return buffer;
+            }
+        }
+
+        const scratch_buffer = try Buffer.initWithContent(
+            allocator,
+            "",
+            .{ .name = SCRATCH_BUFFER_NAME },
+        );
+
+        try g_buffers.append(scratch_buffer);
+
+        return scratch_buffer;
     }
 };

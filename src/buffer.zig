@@ -2,6 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const mem = std.mem;
+const util = @import("util.zig");
 
 const Line = struct {
     content: ArrayList(u8),
@@ -89,16 +90,8 @@ pub const Buffer = struct {
     }
 
     pub fn initFromFile(allocator: *Allocator, path: []const u8) !*Buffer {
-        var actual_path = path;
-        defer if (actual_path.ptr != path.ptr) {
-            allocator.free(actual_path);
-        };
-
-        if (mem.startsWith(u8, path, "~")) {
-            if (std.os.getenv("HOME")) |home_path| {
-                actual_path = try mem.concat(allocator, u8, &[_][]const u8{ home_path, path[1..] });
-            }
-        }
+        var actual_path = try util.normalizePath(allocator, path);
+        defer allocator.free(actual_path);
 
         const file: std.fs.File = if (std.fs.path.isAbsolute(actual_path)) blk: {
             break :blk try std.fs.openFileAbsolute(actual_path, .{ .read = true });

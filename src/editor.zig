@@ -204,6 +204,8 @@ fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
     }
 }
 
+pub fn getScratchBuffer() !*Buffer {}
+
 pub fn init(allocator: *Allocator) !void {
     try renderer.init(allocator, .{
         .on_key_callback = onKey,
@@ -482,6 +484,12 @@ pub fn mainLoop() void {
     while (!renderer.shouldClose()) {
         renderer.beginFrame() catch unreachable;
         defer renderer.endFrame() catch unreachable;
+
+        if (g_editor.panels.items.len == 0) {
+            const scratch_buffer = BufferPanel.getScratchBuffer(g_editor.allocator) catch unreachable;
+            const panel = BufferPanel.init(g_editor.allocator, scratch_buffer) catch unreachable;
+            addPanel(panel) catch unreachable;
+        }
 
         draw() catch |err| {
             std.log.warn("draw error: {}", .{err});
