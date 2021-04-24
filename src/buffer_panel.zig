@@ -1048,7 +1048,7 @@ pub const BufferPanel = struct {
             self.cursor.column = word.codepoint_start_pos;
         } else {
             const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(cursor.line));
-            self.cursor.column = line_length - 1;
+            self.cursor.column = if (line_length > 0) line_length - 1 else 0;
         }
 
         try self.fixupCursor();
