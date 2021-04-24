@@ -49,6 +49,10 @@ pub const Regex = struct {
     }
 
     pub fn addPattern(self: *Regex, id: usize, pattern: []const u8) !void {
+        if (pattern.len == 0) {
+            return error.RegexPatternEmpty;
+        }
+
         var einfo = mem.zeroes(c.OnigErrorInfo);
 
         var pattern_regex: c.OnigRegex = null;
@@ -72,8 +76,8 @@ pub const Regex = struct {
     }
 
     pub fn setBuffer(self: *Regex, buffer: []const u8) void {
-        self.str = &buffer[0];
-        self.end = @ptrCast([*]const u8, &buffer[0]) + buffer.len;
+        self.str = buffer.ptr;
+        self.end = @ptrCast([*]const u8, buffer.ptr) + buffer.len;
         self.start = self.str;
         self.range = self.end;
     }
