@@ -132,7 +132,9 @@ pub const Buffer = struct {
 
     pub fn save(self: *@This()) !void {
         if (self.absolute_path) |path| {
-            var file = try std.fs.openFileAbsolute(path, .{ .write = true });
+            try std.fs.deleteFileAbsolute(path);
+
+            var file = try std.fs.createFileAbsolute(path, .{ .truncate = true });
             defer file.close();
 
             const content = try self.getEntireContent(self.allocator);
@@ -357,6 +359,7 @@ pub const Buffer = struct {
 
     pub fn getEntireContent(self: *@This(), allocator: *Allocator) ![]const u8 {
         var content = ArrayList(u8).init(allocator);
+        try content.ensureCapacity(self.lines.items.len * 40);
 
         for (self.lines.items) |line| {
             try content.appendSlice(line.content.items);
