@@ -5,6 +5,7 @@ const KeyMap = @import("keymap.zig").KeyMap;
 const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
 const Buffer = @import("buffer.zig").Buffer;
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
+const regex = @import("regex.zig");
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
 
@@ -209,6 +210,9 @@ pub fn init(allocator: *Allocator) !void {
         .on_char_callback = onChar,
         .on_scroll_callback = onScroll,
     });
+    errdefer renderer.deinit();
+
+    try regex.initLibrary();
 
     g_editor = Editor{
         .allocator = allocator,
@@ -311,6 +315,8 @@ pub fn deinit() void {
     g_editor.faces.deinit();
     g_editor.panel_vt_map.deinit();
     g_editor.panel_vts.deinit();
+
+    regex.deinitLibrary();
 
     renderer.deinit();
 }
