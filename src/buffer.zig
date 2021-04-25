@@ -68,7 +68,10 @@ pub const Buffer = struct {
             .undo_stack = ArrayList(TextOp).init(allocator),
             .redo_stack = ArrayList(TextOp).init(allocator),
             .name = try allocator.dupe(u8, options.name orelse "** unnamed buffer **"),
-            .absolute_path = if (options.path) |path| try std.fs.realpathAlloc(allocator, path) else null,
+            .absolute_path = if (options.path) |path| try std.fs.realpathAlloc(
+                allocator,
+                path,
+            ) else null,
         };
 
         errdefer self.deinit();

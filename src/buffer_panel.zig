@@ -7,6 +7,7 @@ const KeyMap = @import("keymap.zig").KeyMap;
 const Command = @import("editor.zig").Command;
 const CommandRegistry = @import("editor.zig").CommandRegistry;
 const util = @import("util.zig");
+const Regex = @import("regex.zig").Regex;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 
@@ -122,7 +123,6 @@ pub const VT = editor.PanelVT{
 
     .draw = BufferPanel.draw,
     .get_status_line = BufferPanel.getStatusLine,
-    .clone = BufferPanel.clone,
     .deinit = BufferPanel.deinit,
 
     .on_key = BufferPanel.onKey,
@@ -150,6 +150,8 @@ pub const BufferPanel = struct {
     scroll_x: util.Animation(f64) = .{},
     scroll_y: util.Animation(f64) = .{},
     scroll_to_cursor: bool = false,
+    search_string: ?[]const u8 = null,
+    search_regex: ?Regex = null,
 
     pub fn init(allocator: *Allocator, buffer: *Buffer) !*editor.Panel {
         var self = try allocator.create(BufferPanel);
@@ -451,19 +453,14 @@ pub const BufferPanel = struct {
         }
     }
 
-    fn clone(panel: *editor.Panel) anyerror!*editor.Panel {
-        var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        var cloned = try self.allocator.create(BufferPanel);
-        errdefer self.allocator.destroy(cloned);
-
-        cloned.* = self.*;
-        cloned.panel = try editor.Panel.init(self.allocator, &VT);
-
-        return &cloned.panel;
-    }
-
     fn deinit(panel: *editor.Panel) void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        if (self.search_string) |search_string| {
+            self.allocator.free(search_string);
+        }
+        if (self.search_regex) |*search_regex| {
+            search_regex.deinit();
+        }
         self.allocator.destroy(self);
     }
 
@@ -1024,7 +1021,10 @@ pub const BufferPanel = struct {
 
             var iter = WordIterator.init(line);
             while (iter.nextWord()) |word| {
-                if ((line_index < first_line_index or word.codepoint_start_pos < cursor.column) and word.class != .whitespace) {
+                if ((line_index < first_line_index or
+                    word.codepoint_start_pos < cursor.column) and
+                    word.class != .whitespace)
+                {
                     out_line.* = @intCast(usize, line_index);
                     maybe_word = word;
                 }
@@ -1047,7 +1047,9 @@ pub const BufferPanel = struct {
             self.cursor.line = line;
             self.cursor.column = word.codepoint_start_pos;
         } else {
-            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(cursor.line));
+            const line_length = try std.unicode.utf8CountCodepoints(
+                try self.buffer.getLine(cursor.line),
+            );
             self.cursor.column = if (line_length > 0) line_length - 1 else 0;
         }
 
@@ -1436,8 +1438,88 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn gotoNextSearchMatch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        if (self.search_regex == null) return;
+        var regex = self.search_regex.?;
+
+        const cursor = try self.getFixedCursorPos();
+        var match_pos = cursor;
+
+        var i: usize = cursor.line;
+        outer: while (i < self.buffer.lines.items.len) : (i += 1) {
+            const line = self.buffer.lines.items[i];
+            const content = line.content.items;
+
+            regex.setBuffer(content);
+            var match_start: usize = 0;
+            var match_end: usize = 0;
+            while (regex.nextMatch(&match_start, &match_end)) |_| {
+                // TODO: match start is in bytes, not codepoints
+                if (i != cursor.line or cursor.column < match_start) {
+                    match_pos.line = i;
+                    match_pos.column = match_start;
+                    break :outer;
+                }
+            }
+        }
+
+        self.cursor = match_pos;
+        try self.fixupCursor();
+    }
+
+    fn gotoPrevSearchMatch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        if (self.search_regex == null) return;
+        var regex = self.search_regex.?;
+
+        const cursor = try self.getFixedCursorPos();
+        var match_pos = cursor;
+
+        var i: isize = @intCast(isize, cursor.line);
+        outer: while (i >= 0) : (i -= 1) {
+            const line = self.buffer.lines.items[@intCast(usize, i)];
+            const content = line.content.items;
+
+            regex.setBuffer(content);
+            var match_start: usize = 0;
+            var match_end: usize = 0;
+            while (regex.nextMatch(&match_start, &match_end)) |_| {
+                // TODO: match start is in bytes, not codepoints
+                if (i != cursor.line or cursor.column > match_start) {
+                    match_pos.line = @intCast(usize, i);
+                    match_pos.column = match_start;
+                    break :outer;
+                }
+            }
+        }
+
+        self.cursor = match_pos;
+        try self.fixupCursor();
+    }
+
     fn bufferForwardSearchConfirm(panel: *editor.Panel, text: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var regex = try Regex.init(self.allocator);
+
         std.log.info("Searched for: {s}", .{text});
+
+        try regex.addPattern(0, text);
+
+        if (self.search_string) |search_string| {
+            self.allocator.free(search_string);
+        }
+        if (self.search_regex) |*search_regex| {
+            search_regex.deinit();
+        }
+
+        self.search_string = try self.allocator.dupe(u8, text);
+        self.search_regex = regex;
+
+        try gotoNextSearchMatch(panel, &[_][]const u8{});
     }
 
     fn normalModeForwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
@@ -1506,6 +1588,8 @@ pub const BufferPanel = struct {
             try key_map.bind("b", moveToPrevWordStart);
             try key_map.bind("f <?>", normalFindCharForward);
             try key_map.bind("F <?>", normalFindCharBackward);
+            try key_map.bind("n", gotoNextSearchMatch);
+            try key_map.bind("N", gotoPrevSearchMatch);
         }
 
         try normal_key_map.bind("d w", deleteToNextWordStart);

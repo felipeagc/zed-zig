@@ -46,7 +46,6 @@ pub const PanelVT = struct {
 
     get_status_line: fn (self: *Panel, allocator: *Allocator) anyerror![]const u8,
     draw: fn (self: *Panel, rect: renderer.Rect) anyerror!void,
-    clone: fn (self: *Panel) anyerror!*Panel,
     deinit: fn (self: *Panel) void,
 
     on_key: ?fn (self: *Panel, key: renderer.Key, mods: u32) anyerror!void = null,
@@ -74,10 +73,6 @@ pub const Panel = struct {
     pub fn deinit(self: *Panel) void {
         self.minibuffer.deinit();
         self.vt.deinit(self);
-    }
-
-    pub fn clone(self: *Panel) !*Panel {
-        return self.vt.clone(self);
     }
 
     pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!void {
@@ -192,15 +187,23 @@ fn commandHandler(panel: *Panel, command_string: []const u8) anyerror!void {
 }
 
 fn commandNewSplit(panel: *Panel, args: [][]const u8) anyerror!void {
-    try g_editor.panels.insert(g_editor.selected_panel + 1, try panel.clone());
+    try g_editor.panels.insert(
+        g_editor.selected_panel + 1,
+        try BufferPanel.init(
+            g_editor.allocator,
+            try BufferPanel.getScratchBuffer(g_editor.allocator),
+        ),
+    );
 }
 
 fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
-    if (g_editor.panels.items.len > 1) {
-        const removed_panel = g_editor.panels.orderedRemove(g_editor.selected_panel);
-        removed_panel.deinit();
+    const removed_panel = g_editor.panels.orderedRemove(g_editor.selected_panel);
+    removed_panel.deinit();
 
+    if (g_editor.panels.items.len > 0) {
         g_editor.selected_panel = std.math.min(g_editor.selected_panel, g_editor.panels.items.len - 1);
+    } else {
+        g_editor.selected_panel = 0;
     }
 }
 
@@ -486,9 +489,18 @@ pub fn mainLoop() void {
         defer renderer.endFrame() catch unreachable;
 
         if (g_editor.panels.items.len == 0) {
-            const scratch_buffer = BufferPanel.getScratchBuffer(g_editor.allocator) catch unreachable;
-            const panel = BufferPanel.init(g_editor.allocator, scratch_buffer) catch unreachable;
+            const scratch_buffer = BufferPanel.getScratchBuffer(
+                g_editor.allocator,
+            ) catch unreachable;
+
+            const panel = BufferPanel.init(
+                g_editor.allocator,
+                scratch_buffer,
+            ) catch unreachable;
+
             addPanel(panel) catch unreachable;
+
+            g_editor.selected_panel = 0;
         }
 
         draw() catch |err| {
