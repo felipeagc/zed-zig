@@ -1505,8 +1505,6 @@ pub const BufferPanel = struct {
 
         var regex = try Regex.init(self.allocator);
 
-        std.log.info("Searched for: {s}", .{text});
-
         try regex.addPattern(0, text);
 
         if (self.search_string) |search_string| {
@@ -1522,6 +1520,26 @@ pub const BufferPanel = struct {
         try gotoNextSearchMatch(panel, &[_][]const u8{});
     }
 
+    fn bufferBackwardSearchConfirm(panel: *editor.Panel, text: []const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var regex = try Regex.init(self.allocator);
+
+        try regex.addPattern(0, text);
+
+        if (self.search_string) |search_string| {
+            self.allocator.free(search_string);
+        }
+        if (self.search_regex) |*search_regex| {
+            search_regex.deinit();
+        }
+
+        self.search_string = try self.allocator.dupe(u8, text);
+        self.search_regex = regex;
+
+        try gotoPrevSearchMatch(panel, &[_][]const u8{});
+    }
+
     fn normalModeForwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         try MiniBuffer.activate(panel, "/", .{
             .on_confirm = bufferForwardSearchConfirm,
@@ -1529,7 +1547,9 @@ pub const BufferPanel = struct {
     }
 
     fn normalModeBackwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
-        try MiniBuffer.activate(panel, "?", .{});
+        try MiniBuffer.activate(panel, "?", .{
+            .on_confirm = bufferBackwardSearchConfirm,
+        });
     }
 
     fn commandWriteFile(panel: *editor.Panel, args: [][]const u8) anyerror!void {
