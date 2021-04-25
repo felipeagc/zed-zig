@@ -2,6 +2,7 @@ const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const Buffer = @import("buffer.zig").Buffer;
+const FileType = @import("filetype.zig").FileType;
 const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
 const KeyMap = @import("keymap.zig").KeyMap;
 const Command = @import("editor.zig").Command;
@@ -57,60 +58,8 @@ fn positionIsBetween(pos: Position, start: Position, end: Position) bool {
     return is_after_start and is_before_end;
 }
 
-const WordIterator = struct {
-    text: []const u8,
-    pos: usize = 0,
-    codepoint_pos: usize = 0,
-
-    const Word = struct {
-        text: []const u8,
-        codepoint_start_pos: usize,
-        codepoint_length: usize,
-        class: CharClass,
-    };
-
-    fn init(text: []const u8) WordIterator {
-        return WordIterator{ .text = text };
-    }
-
-    fn nextWord(self: *WordIterator) ?Word {
-        if (self.pos >= self.text.len) return null;
-
-        const start_pos = self.pos;
-        const codepoint_start_pos = self.codepoint_pos;
-
-        var codepoint_length: usize = 0;
-        var byte_length: usize = 0;
-        var char_class: CharClass = undefined;
-
-        var iter = std.unicode.Utf8Iterator{
-            .bytes = self.text[self.pos..],
-            .i = 0,
-        };
-        while (iter.nextCodepointSlice()) |codepoint_slice| {
-            const codepoint = std.unicode.utf8Decode(codepoint_slice) catch unreachable;
-            const current_char_class = codepointToCharClass(codepoint);
-            if (codepoint_length == 0) char_class = current_char_class;
-
-            if (char_class != current_char_class) {
-                break;
-            }
-
-            codepoint_length += 1;
-            byte_length += codepoint_slice.len;
-        }
-
-        self.pos += byte_length;
-        self.codepoint_pos += codepoint_length;
-        return Word{
-            .text = self.text[start_pos..self.pos],
-            .codepoint_start_pos = codepoint_start_pos,
-            .codepoint_length = codepoint_length,
-            .class = char_class,
-        };
-    }
-};
-
+var g_filetypes: std.StringArrayHashMap(*FileType) = undefined;
+var g_plain_filetype: *FileType = undefined;
 var g_buffers: std.ArrayList(*Buffer) = undefined;
 var command_registry: CommandRegistry = undefined;
 var normal_key_map: KeyMap = undefined;
@@ -175,9 +124,28 @@ pub const BufferPanel = struct {
             }
         }
 
-        const buffer = try Buffer.initFromFile(allocator, actual_path);
+        const buffer = try Buffer.initFromFile(allocator, .{
+            .path = actual_path,
+            .filetype = getFileType("plain"),
+        });
         try g_buffers.append(buffer);
         return buffer;
+    }
+
+    pub fn registerFileType(filetype: *FileType) !void {
+        if (g_filetypes.get(filetype.name)) |existing_filetype| {
+            existing_filetype.deinit();
+        }
+
+        try g_filetypes.put(filetype.name, filetype);
+    }
+
+    pub fn getFileType(name: []const u8) *FileType {
+        if (g_filetypes.get(name)) |filetype| {
+            return filetype;
+        }
+
+        return g_plain_filetype;
     }
 
     fn scrollToCursor(self: *BufferPanel) void {
@@ -481,7 +449,7 @@ pub const BufferPanel = struct {
 
         return switch (self.mode) {
             .normal => try normal_key_map.onChar(codepoint, panel),
-            .visual =>  try visual_key_map.onChar(codepoint, panel),
+            .visual => try visual_key_map.onChar(codepoint, panel),
             .visual_line => try visual_line_key_map.onChar(codepoint, panel),
             .insert => blk: {
                 var buf = [4]u8{ 0, 0, 0, 0 };
@@ -1574,11 +1542,15 @@ pub const BufferPanel = struct {
 
     fn registerVT(allocator: *Allocator) anyerror!void {
         g_buffers = std.ArrayList(*Buffer).init(allocator);
+        g_filetypes = std.StringArrayHashMap(*FileType).init(allocator);
         command_registry = CommandRegistry.init(allocator);
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
         visual_key_map = try KeyMap.init(allocator);
         visual_line_key_map = try KeyMap.init(allocator);
+
+        g_plain_filetype = try FileType.init(allocator, "plain");
+        try registerFileType(g_plain_filetype);
 
         const normal_key_maps = [_]*KeyMap{
             &normal_key_map,
@@ -1664,11 +1636,19 @@ pub const BufferPanel = struct {
             buffer.deinit();
         }
 
+        {
+            var iter = g_filetypes.iterator();
+            while (iter.next()) |entry| {
+                entry.value.deinit();
+            }
+        }
+
         visual_line_key_map.deinit();
         visual_key_map.deinit();
         insert_key_map.deinit();
         normal_key_map.deinit();
         command_registry.deinit();
+        g_filetypes.deinit();
         g_buffers.deinit();
     }
 
@@ -1682,11 +1662,68 @@ pub const BufferPanel = struct {
         const scratch_buffer = try Buffer.initWithContent(
             allocator,
             "",
-            .{ .name = SCRATCH_BUFFER_NAME },
+            .{
+                .name = SCRATCH_BUFFER_NAME,
+                .filetype = getFileType("plain"),
+            },
         );
 
         try g_buffers.append(scratch_buffer);
 
         return scratch_buffer;
+    }
+};
+
+const WordIterator = struct {
+    text: []const u8,
+    pos: usize = 0,
+    codepoint_pos: usize = 0,
+
+    const Word = struct {
+        text: []const u8,
+        codepoint_start_pos: usize,
+        codepoint_length: usize,
+        class: CharClass,
+    };
+
+    fn init(text: []const u8) WordIterator {
+        return WordIterator{ .text = text };
+    }
+
+    fn nextWord(self: *WordIterator) ?Word {
+        if (self.pos >= self.text.len) return null;
+
+        const start_pos = self.pos;
+        const codepoint_start_pos = self.codepoint_pos;
+
+        var codepoint_length: usize = 0;
+        var byte_length: usize = 0;
+        var char_class: CharClass = undefined;
+
+        var iter = std.unicode.Utf8Iterator{
+            .bytes = self.text[self.pos..],
+            .i = 0,
+        };
+        while (iter.nextCodepointSlice()) |codepoint_slice| {
+            const codepoint = std.unicode.utf8Decode(codepoint_slice) catch unreachable;
+            const current_char_class = codepointToCharClass(codepoint);
+            if (codepoint_length == 0) char_class = current_char_class;
+
+            if (char_class != current_char_class) {
+                break;
+            }
+
+            codepoint_length += 1;
+            byte_length += codepoint_slice.len;
+        }
+
+        self.pos += byte_length;
+        self.codepoint_pos += codepoint_length;
+        return Word{
+            .text = self.text[start_pos..self.pos],
+            .codepoint_start_pos = codepoint_start_pos,
+            .codepoint_length = codepoint_length,
+            .class = char_class,
+        };
     }
 };

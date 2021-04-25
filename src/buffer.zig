@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
 const mem = std.mem;
 const util = @import("util.zig");
+const FileType = @import("filetype.zig").FileType;
 
 const Line = struct {
     content: ArrayList(u8),
@@ -48,6 +49,7 @@ const TextOpOptions = struct {
 };
 
 pub const BufferOptions = struct {
+    filetype: *FileType,
     name: ?[]const u8 = null,
     path: ?[]const u8 = null,
 };
@@ -59,6 +61,7 @@ pub const Buffer = struct {
     redo_stack: ArrayList(TextOp),
     name: []const u8,
     absolute_path: ?[]const u8,
+    filetype: *FileType,
 
     pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
         var self = try allocator.create(@This());
@@ -72,6 +75,7 @@ pub const Buffer = struct {
                 allocator,
                 path,
             ) else null,
+            .filetype = options.filetype,
         };
 
         errdefer self.deinit();
@@ -92,8 +96,10 @@ pub const Buffer = struct {
         return self;
     }
 
-    pub fn initFromFile(allocator: *Allocator, path: []const u8) !*Buffer {
-        var actual_path = try util.normalizePath(allocator, path);
+    pub fn initFromFile(allocator: *Allocator, options: BufferOptions) !*Buffer {
+        if (options.path == null) return error.BufferInitMissingPath;
+
+        var actual_path = try util.normalizePath(allocator, options.path.?);
         defer allocator.free(actual_path);
 
         const file: std.fs.File = if (std.fs.path.isAbsolute(actual_path)) blk: {
@@ -110,6 +116,7 @@ pub const Buffer = struct {
         var self = try Buffer.initWithContent(allocator, content, .{
             .name = std.fs.path.basename(actual_path),
             .path = actual_path,
+            .filetype = options.filetype,
         });
         errdefer self.deinit();
 
