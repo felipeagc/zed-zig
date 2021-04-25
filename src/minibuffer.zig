@@ -221,22 +221,27 @@ pub const MiniBuffer = struct {
 
     pub fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!void {
         const self = panel.minibuffer;
+
+        const allocator = self.allocator;
+        const content = try allocator.dupe(u8, self.text.items);
+        defer allocator.free(content);
+
         switch (key) {
             .@"<esc>" => {
                 self.resetContent();
                 panel.minibuffer_active = false;
 
                 if (self.callbacks.on_cancel) |on_cancel| {
-                    try on_cancel(panel, self.text.items);
+                    try on_cancel(panel, content);
                 }
             },
             .@"<enter>" => {
-                if (self.callbacks.on_confirm) |on_confirm| {
-                    try on_confirm(panel, self.text.items);
-                }
-
                 self.resetContent();
                 panel.minibuffer_active = false;
+
+                if (self.callbacks.on_confirm) |on_confirm| {
+                    try on_confirm(panel, content);
+                }
             },
             .@"<backspace>" => {
                 if (self.cursor > 0) {
@@ -244,7 +249,7 @@ pub const MiniBuffer = struct {
                     try self.delete(self.cursor, 1);
 
                     if (self.callbacks.on_change) |on_change| {
-                        try on_change(panel, self.text.items);
+                        try on_change(panel, content);
                     }
                 }
             },
@@ -254,7 +259,7 @@ pub const MiniBuffer = struct {
                     try self.delete(self.cursor, 1);
 
                     if (self.callbacks.on_change) |on_change| {
-                        try on_change(panel, self.text.items);
+                        try on_change(panel, content);
                     }
                 }
             },
