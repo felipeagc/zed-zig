@@ -464,7 +464,7 @@ pub const BufferPanel = struct {
         self.allocator.destroy(self);
     }
 
-    fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!void {
+    fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!bool {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         var map = switch (self.mode) {
             .normal => normal_key_map,
@@ -473,31 +473,26 @@ pub const BufferPanel = struct {
             .visual_line => visual_line_key_map,
         };
 
-        _ = try map.onKey(key, mods, panel);
+        return map.onKey(key, mods, panel);
     }
 
-    fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!void {
+    fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!bool {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        switch (self.mode) {
-            .normal => {
-                _ = try normal_key_map.onChar(codepoint, panel);
-            },
-            .visual => {
-                _ = try visual_key_map.onChar(codepoint, panel);
-            },
-            .visual_line => {
-                _ = try visual_line_key_map.onChar(codepoint, panel);
-            },
-            .insert => {
+        return switch (self.mode) {
+            .normal => try normal_key_map.onChar(codepoint, panel),
+            .visual =>  try visual_key_map.onChar(codepoint, panel),
+            .visual_line => try visual_line_key_map.onChar(codepoint, panel),
+            .insert => blk: {
                 var buf = [4]u8{ 0, 0, 0, 0 };
                 const len = try std.unicode.utf8Encode(@intCast(u21, codepoint), &buf);
                 try self.buffer.insert(buf[0..len], self.cursor.line, self.cursor.column);
                 self.cursor.column += 1;
 
                 try self.fixupCursor();
+                break :blk true;
             },
-        }
+        };
     }
 
     fn onScroll(panel: *editor.Panel, dx: f64, dy: f64) anyerror!void {

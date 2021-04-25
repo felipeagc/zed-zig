@@ -207,7 +207,7 @@ pub const MiniBuffer = struct {
         self.resetContent();
     }
 
-    pub fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!void {
+    pub fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!bool {
         const self = panel.minibuffer;
         var text = [4]u8{ 0, 0, 0, 0 };
         var text_bytes = try std.unicode.utf8Encode(@intCast(u21, codepoint), &text);
@@ -217,33 +217,37 @@ pub const MiniBuffer = struct {
         if (self.callbacks.on_change) |on_change| {
             try on_change(panel, self.text.items);
         }
+
+        return true;
     }
 
-    pub fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!void {
+    pub fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!bool {
         const self = panel.minibuffer;
 
         const allocator = self.allocator;
         const content = try allocator.dupe(u8, self.text.items);
         defer allocator.free(content);
 
-        switch (key) {
-            .@"<esc>" => {
+        return switch (key) {
+            .@"<esc>" => blk: {
                 self.resetContent();
                 panel.minibuffer_active = false;
 
                 if (self.callbacks.on_cancel) |on_cancel| {
                     try on_cancel(panel, content);
                 }
+                break :blk true;
             },
-            .@"<enter>" => {
+            .@"<enter>" => blk:{
                 self.resetContent();
                 panel.minibuffer_active = false;
 
                 if (self.callbacks.on_confirm) |on_confirm| {
                     try on_confirm(panel, content);
                 }
+                break :blk true;
             },
-            .@"<backspace>" => {
+            .@"<backspace>" => blk:{
                 if (self.cursor > 0) {
                     self.cursor -= 1;
                     try self.delete(self.cursor, 1);
@@ -252,8 +256,9 @@ pub const MiniBuffer = struct {
                         try on_change(panel, content);
                     }
                 }
+                break :blk true;
             },
-            .@"<delete>" => {
+            .@"<delete>" => blk:{
                 const text_length = try std.unicode.utf8CountCodepoints(self.text.items);
                 if (self.cursor < text_length) {
                     try self.delete(self.cursor, 1);
@@ -262,15 +267,18 @@ pub const MiniBuffer = struct {
                         try on_change(panel, content);
                     }
                 }
+                break :blk true;
             },
-            .@"<left>" => {
+            .@"<left>" => blk:{
                 if (self.cursor > 0) self.cursor -= 1;
+                break :blk true;
             },
-            .@"<right>" => {
+            .@"<right>" => blk: {
                 if ((self.cursor + 1) <= self.text.items.len) self.cursor += 1;
+                break :blk true;
             },
-            else => {},
-        }
+            else => false,
+        };
     }
 };
 

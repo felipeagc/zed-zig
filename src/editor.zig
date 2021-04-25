@@ -48,8 +48,8 @@ pub const PanelVT = struct {
     draw: fn (self: *Panel, rect: renderer.Rect) anyerror!void,
     deinit: fn (self: *Panel) void,
 
-    on_key: ?fn (self: *Panel, key: renderer.Key, mods: u32) anyerror!void = null,
-    on_char: ?fn (self: *Panel, codepoint: u32) anyerror!void = null,
+    on_key: ?fn (self: *Panel, key: renderer.Key, mods: u32) anyerror!bool = null,
+    on_char: ?fn (self: *Panel, codepoint: u32) anyerror!bool = null,
     on_scroll: ?fn (self: *Panel, dx: f64, dy: f64) anyerror!void = null,
 
     register_vt: ?fn (allocator: *Allocator) anyerror!void = null,
@@ -75,24 +75,28 @@ pub const Panel = struct {
         self.vt.deinit(self);
     }
 
-    pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!void {
+    pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!bool {
         if (panel.minibuffer_active) {
-            try MiniBuffer.onKey(panel, key, mods);
+            return MiniBuffer.onKey(panel, key, mods);
         } else {
             if (panel.vt.on_key) |panel_on_key| {
-                try panel_on_key(panel, key, mods);
+                return panel_on_key(panel, key, mods);
             }
         }
+
+        return false;
     }
 
-    pub fn onChar(panel: *Panel, codepoint: u32) anyerror!void {
+    pub fn onChar(panel: *Panel, codepoint: u32) anyerror!bool {
         if (panel.minibuffer_active) {
-            try MiniBuffer.onChar(panel, codepoint);
+            return MiniBuffer.onChar(panel, codepoint);
         } else {
             if (panel.vt.on_char) |panel_on_char| {
-                try panel_on_char(panel, codepoint);
+                return panel_on_char(panel, codepoint);
             }
         }
+
+        return false;
     }
 };
 
@@ -123,13 +127,16 @@ var g_editor: Editor = undefined;
 fn onKey(key: renderer.Key, mods: u32) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
 
-    const got_binding = g_editor.global_keymap.onKey(key, mods, panel) catch |err| blk: {
-        std.log.info("onKey error: {}", .{err});
-        break :blk false;
-    };
+    const key_registered = if (g_editor.global_keymap.isAtRoot())
+        panel.onKey(key, mods) catch |err| blk: {
+            std.log.info("onKey error: {}", .{err});
+            break :blk true;
+        }
+    else
+        false;
 
-    if (!got_binding) {
-        panel.onKey(key, mods) catch |err| {
+    if (!key_registered) {
+        _ = g_editor.global_keymap.onKey(key, mods, panel) catch |err| {
             std.log.info("onKey error: {}", .{err});
         };
     }
@@ -138,13 +145,16 @@ fn onKey(key: renderer.Key, mods: u32) void {
 fn onChar(codepoint: u32) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
 
-    const got_binding = g_editor.global_keymap.onChar(codepoint, panel) catch |err| blk: {
-        std.log.info("onChar error: {}", .{err});
-        break :blk false;
-    };
+    const key_registered = if (g_editor.global_keymap.isAtRoot())
+        panel.onChar(codepoint) catch |err| blk: {
+            std.log.info("onChar error: {}", .{err});
+            break :blk true;
+        }
+    else
+        false;
 
-    if (!got_binding) {
-        panel.onChar(codepoint) catch |err| {
+    if (!key_registered) {
+        _ = g_editor.global_keymap.onChar(codepoint, panel) catch |err| {
             std.log.info("onChar error: {}", .{err});
         };
     }
@@ -294,8 +304,8 @@ pub fn init(allocator: *Allocator) !void {
         }
     }.callback);
 
-    try g_editor.global_keymap.bind("C-/", commandNewSplit);
-    try g_editor.global_keymap.bind("C-w", commandCloseSplit);
+    try g_editor.global_keymap.bind("<space> w /", commandNewSplit);
+    try g_editor.global_keymap.bind("<space> w d", commandCloseSplit);
 
     try g_editor.global_commands.register("vsp", commandNewSplit);
     try g_editor.global_commands.register("q", commandCloseSplit);

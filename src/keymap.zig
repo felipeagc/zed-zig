@@ -86,6 +86,10 @@ pub const KeyMap = struct {
         self.root_submap.deinit();
     }
 
+    pub fn isAtRoot(self: *@This()) bool {
+        return self.current_submap == self.root_submap;
+    }
+
     pub fn onKey(
         self: *@This(),
         key: renderer.Key,
@@ -93,7 +97,7 @@ pub const KeyMap = struct {
         panel: *editor.Panel,
     ) !bool {
         const valid_key = switch (key) {
-            .@"<space>",
+            // .@"<space>",
             .@"<esc>",
             .@"<enter>",
             .@"<tab>",
@@ -180,8 +184,10 @@ pub const KeyMap = struct {
 
     pub fn onChar(self: *@This(), codepoint: u32, panel: *editor.Panel) !bool {
         var bytes = [_]u8{0} ** 4;
-        const byte_count = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
-        const key_name = bytes[0..byte_count];
+        const key_name = if (codepoint == ' ') "<space>" else blk: {
+            const byte_count = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
+            break :blk bytes[0..byte_count];
+        };
 
         var triggered_wildcard = self.current_submap.triggerWildcard(codepoint, panel) catch |err| {
             self.current_submap = self.root_submap;
