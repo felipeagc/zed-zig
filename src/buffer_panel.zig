@@ -1415,14 +1415,28 @@ pub const BufferPanel = struct {
             const line = self.buffer.lines.items[i];
             const content = line.content.items;
 
+            var codepoint_index: usize = 0;
+            var byte_index: usize = 0;
+            var iter = std.unicode.Utf8View.initUnchecked(content).iterator();
+
             regex.setBuffer(content);
             var match_start: usize = 0;
             var match_end: usize = 0;
             while (regex.nextMatch(&match_start, &match_end)) |_| {
-                // TODO: match start is in bytes, not codepoints
-                if (i != cursor.line or cursor.column < match_start) {
+                while (true) {
+                    const codepoint_slice = iter.peek(1);
+
+                    if (codepoint_slice.len == 0) break;
+                    if (byte_index == match_start) break;
+
+                    _ = iter.nextCodepoint();
+                    byte_index += codepoint_slice.len;
+                    codepoint_index += 1;
+                }
+
+                if (i != cursor.line or cursor.column < codepoint_index) {
                     match_pos.line = i;
-                    match_pos.column = match_start;
+                    match_pos.column = codepoint_index;
                     break :outer;
                 }
             }
@@ -1446,14 +1460,28 @@ pub const BufferPanel = struct {
             const line = self.buffer.lines.items[@intCast(usize, i)];
             const content = line.content.items;
 
+            var codepoint_index: usize = 0;
+            var byte_index: usize = 0;
+            var iter = std.unicode.Utf8View.initUnchecked(content).iterator();
+
             regex.setBuffer(content);
             var match_start: usize = 0;
             var match_end: usize = 0;
             while (regex.nextMatch(&match_start, &match_end)) |_| {
-                // TODO: match start is in bytes, not codepoints
-                if (i != cursor.line or cursor.column > match_start) {
+                while (true) {
+                    const codepoint_slice = iter.peek(1);
+
+                    if (codepoint_slice.len == 0) break;
+                    if (byte_index == match_start) break;
+
+                    _ = iter.nextCodepoint();
+                    byte_index += codepoint_slice.len;
+                    codepoint_index += 1;
+                }
+
+                if (i != cursor.line or cursor.column > codepoint_index) {
                     match_pos.line = @intCast(usize, i);
-                    match_pos.column = match_start;
+                    match_pos.column = codepoint_index;
                     break :outer;
                 }
             }
