@@ -44,5 +44,8 @@ pub fn normalizePath(allocator: *Allocator, path: []const u8) ![]const u8 {
         }
     }
 
-    return try std.fs.realpathAlloc(allocator, actual_path);
+    return if (std.fs.realpathAlloc(allocator, actual_path)) |realpath|
+        realpath
+    else |_|
+        (try allocator.dupe(u8, actual_path));
 }

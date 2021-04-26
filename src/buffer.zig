@@ -99,15 +99,14 @@ pub const Buffer = struct {
     pub fn initFromFile(allocator: *Allocator, options: BufferOptions) !*Buffer {
         if (options.path == null) return error.BufferInitMissingPath;
 
+        const file = try std.fs.cwd().createFile(options.path.?, .{
+            .read = true,
+            .truncate = false,
+        });
+        defer file.close();
+
         var actual_path = try util.normalizePath(allocator, options.path.?);
         defer allocator.free(actual_path);
-
-        const file: std.fs.File = if (std.fs.path.isAbsolute(actual_path)) blk: {
-            break :blk try std.fs.openFileAbsolute(actual_path, .{ .read = true });
-        } else blk: {
-            break :blk try std.fs.cwd().openFile(actual_path, .{ .read = true });
-        };
-        defer file.close();
 
         const stat = try file.stat();
         const content = try file.readToEndAlloc(allocator, @intCast(usize, stat.size));

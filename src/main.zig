@@ -41,7 +41,7 @@ pub fn main() anyerror!void {
     if (options.positionals.len > 0) {
         for (options.positionals) |path| {
             const buffer = BufferPanel.addBufferFromFile(allocator, path) catch |err| {
-                std.log.info("Failed to open buffer: {s}", .{path});
+                std.log.info("Failed to open buffer: \"{s}\": {}", .{path, err});
                 continue;
             };
             try editor.addPanel(try BufferPanel.init(allocator, buffer));
