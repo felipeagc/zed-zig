@@ -40,18 +40,6 @@ fn codepointToCharClass(codepoint: u32) CharClass {
     };
 }
 
-fn getFirstPosition(a: Position, b: Position) usize {
-    if (a.line < b.line) {
-        return 0;
-    } else if (b.line < a.line) {
-        return 1;
-    } else if (a.column < b.column) {
-        return 0;
-    } else {
-        return 1;
-    }
-}
-
 fn positionIsBetween(pos: Position, start: Position, end: Position) bool {
     const is_after_start = pos.line > start.line or (start.line == pos.line and pos.column >= start.column);
     const is_before_end = pos.line < end.line or (pos.line == end.line and pos.column <= end.column);
@@ -112,6 +100,14 @@ pub const BufferPanel = struct {
         return &self.panel;
     }
 
+    fn resetView(self: *BufferPanel) void {
+        self.cursor = .{};
+        self.mark = .{};
+        self.scroll_x = .{};
+        self.scroll_y = .{};
+        self.mode = .normal;
+    }
+
     pub fn addBufferFromFile(allocator: *Allocator, path: []const u8) !*Buffer {
         const actual_path = try util.normalizePath(allocator, path);
         defer allocator.free(actual_path);
@@ -162,49 +158,15 @@ pub const BufferPanel = struct {
         return length;
     }
 
-    fn getTextIndentLevel(line: []const u8, tab_width: usize) usize {
-        var level: f64 = 0.0;
-
-        var iter = std.unicode.Utf8View.initUnchecked(line).iterator();
-        while (iter.nextCodepoint()) |codepoint| {
-            switch (codepoint) {
-                ' ' => level += 1.0 / @intToFloat(f64, tab_width),
-                '\t' => level += 1,
-                else => break,
-            }
-        }
-
-        return @floatToInt(usize, std.math.trunc(level));
-    }
-
-    fn getLineIndentLevel(self: *BufferPanel, line_index: usize) usize {
-        if (line_index >= self.buffer.lines.items.len) return 0;
-
-        const first_line_content = self.buffer.lines.items[line_index].content.items;
-
-        const increase_indentation_regex = &self.buffer.filetype.increase_indentation_regex;
-        const decrease_indentation_regex = &self.buffer.filetype.decrease_indentation_regex;
-
-        const tab_width = @intCast(usize, self.buffer.filetype.tab_width);
-
+    fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) usize {
         var i: isize = @intCast(isize, line_index) - 1;
         while (i >= 0) : (i -= 1) {
             const line_content = self.buffer.lines.items[@intCast(usize, i)].content.items;
-            increase_indentation_regex.setBuffer(line_content);
-            decrease_indentation_regex.setBuffer(line_content);
-            const line_ident_level = getTextIndentLevel(line_content, tab_width);
-            if (i != line_index and increase_indentation_regex.nextMatch(null, null) != null) {
-                decrease_indentation_regex.setBuffer(first_line_content);
-                if (decrease_indentation_regex.nextMatch(null, null) != null) {
-                    return line_ident_level;
-                }
-                return line_ident_level + 1;
-            } else if (decrease_indentation_regex.nextMatch(null, null) != null) {
-                return if (line_ident_level > 0) line_ident_level - 1 else line_ident_level;
+            if (line_content.len > 0 and line_content[0] != ' ' and line_content[0] != '\t') {
+                break;
             }
         }
-
-        return 0;
+        return @intCast(usize, std.math.max(0, i));
     }
 
     fn scrollToCursor(self: *BufferPanel) void {
@@ -268,6 +230,23 @@ pub const BufferPanel = struct {
         ) + (@intCast(i32, line_index) * char_height);
     }
 
+    fn getSelectionRegion(self: *BufferPanel, start_pos: *Position, end_pos: *Position) !void {
+        const cursor = try self.getFixedCursorPos();
+        if (cursor.line < self.mark.line) {
+            start_pos.* = cursor;
+            end_pos.* = self.mark;
+        } else if (self.mark.line < cursor.line) {
+            start_pos.* = self.mark;
+            end_pos.* = cursor;
+        } else if (cursor.column < self.mark.column) {
+            start_pos.* = cursor;
+            end_pos.* = self.mark;
+        } else {
+            start_pos.* = self.mark;
+            end_pos.* = cursor;
+        }
+    }
+
     fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
@@ -320,9 +299,9 @@ pub const BufferPanel = struct {
         if (self.mode == .visual) {
             renderer.setColor(editor.getFace("border").color);
 
-            const first_position = getFirstPosition(cursor, self.mark);
-            var start_pos = if (first_position == 0) cursor else self.mark;
-            var end_pos = if (first_position == 1) cursor else self.mark;
+            var start_pos = Position{};
+            var end_pos = Position{};
+            try self.getSelectionRegion(&start_pos, &end_pos);
             start_pos.line = std.math.max(start_pos.line, if (first_line > 0) first_line - 1 else 0);
             end_pos.line = std.math.min(end_pos.line, last_line + 1);
 
@@ -370,9 +349,9 @@ pub const BufferPanel = struct {
         if (self.mode == .visual_line) {
             renderer.setColor(editor.getFace("border").color);
 
-            const first_position = getFirstPosition(cursor, self.mark);
-            var start_pos = if (first_position == 0) cursor else self.mark;
-            var end_pos = if (first_position == 1) cursor else self.mark;
+            var start_pos = Position{};
+            var end_pos = Position{};
+            try self.getSelectionRegion(&start_pos, &end_pos);
             start_pos.line = std.math.max(start_pos.line, if (first_line > 0) first_line - 1 else 0);
             end_pos.line = std.math.min(end_pos.line, last_line + 1);
 
@@ -1007,7 +986,10 @@ pub const BufferPanel = struct {
 
             var iter = WordIterator.init(line);
             while (iter.nextWord()) |word| {
-                if ((line_index != cursor.line or word.codepoint_start_pos > cursor.column) and word.class != .whitespace) {
+                if ((line_index != cursor.line or
+                    word.codepoint_start_pos > cursor.column) and
+                    word.class != .whitespace)
+                {
                     out_line.* = line_index;
                     return word;
                 }
@@ -1024,7 +1006,10 @@ pub const BufferPanel = struct {
 
             var iter = WordIterator.init(line);
             while (iter.nextWord()) |word| {
-                if ((line_index != cursor.line or (word.codepoint_start_pos + word.codepoint_length - 1) > cursor.column) and word.class != .whitespace) {
+                if ((line_index != cursor.line or
+                    (word.codepoint_start_pos + word.codepoint_length - 1) > cursor.column) and
+                    word.class != .whitespace)
+                {
                     out_line.* = line_index;
                     return word;
                 }
@@ -1288,9 +1273,9 @@ pub const BufferPanel = struct {
 
         const cursor = try self.getFixedCursorPos();
 
-        const first_position = getFirstPosition(cursor, self.mark);
-        const start_pos = if (first_position == 0) cursor else self.mark;
-        const end_pos = if (first_position == 1) cursor else self.mark;
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
 
         const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
 
@@ -1314,9 +1299,9 @@ pub const BufferPanel = struct {
 
         const cursor = try self.getFixedCursorPos();
 
-        const first_position = getFirstPosition(cursor, self.mark);
-        const start_pos = if (first_position == 0) cursor else self.mark;
-        const end_pos = if (first_position == 1) cursor else self.mark;
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
 
         const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
 
@@ -1345,9 +1330,9 @@ pub const BufferPanel = struct {
 
         const cursor = try self.getFixedCursorPos();
 
-        const first_position = getFirstPosition(cursor, self.mark);
-        const start_pos = if (first_position == 0) cursor else self.mark;
-        const end_pos = if (first_position == 1) cursor else self.mark;
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
 
         const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
 
@@ -1372,9 +1357,9 @@ pub const BufferPanel = struct {
 
         const cursor = try self.getFixedCursorPos();
 
-        const first_position = getFirstPosition(cursor, self.mark);
-        var start_pos = if (first_position == 0) cursor else self.mark;
-        var end_pos = if (first_position == 1) cursor else self.mark;
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
 
         start_pos.column = 0;
 
@@ -1400,9 +1385,9 @@ pub const BufferPanel = struct {
 
         const cursor = try self.getFixedCursorPos();
 
-        const first_position = getFirstPosition(cursor, self.mark);
-        var start_pos = if (first_position == 0) cursor else self.mark;
-        var end_pos = if (first_position == 1) cursor else self.mark;
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
 
         start_pos.column = 0;
 
@@ -1436,9 +1421,9 @@ pub const BufferPanel = struct {
 
         const cursor = try self.getFixedCursorPos();
 
-        const first_position = getFirstPosition(cursor, self.mark);
-        var start_pos = if (first_position == 0) cursor else self.mark;
-        var end_pos = if (first_position == 1) cursor else self.mark;
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
 
         start_pos.column = 0;
 
@@ -1602,19 +1587,10 @@ pub const BufferPanel = struct {
         });
     }
 
-    fn normalIndentLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
-        var self = @fieldParentPtr(BufferPanel, "panel", panel);
-
+    fn autoIndentLine(self: *BufferPanel, line_index: usize, indent_level: usize) !void {
         const filetype = self.buffer.filetype;
 
-        const line_index = (try self.getFixedCursorPos()).line;
-        const indent_level = self.getLineIndentLevel(line_index);
         const line_content = self.buffer.lines.items[line_index].content.items;
-
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
-
-        try self.fixupCursor();
 
         const leading_whitespace = getLeadingWhitespaceCodepoint(line_content);
 
@@ -1627,7 +1603,79 @@ pub const BufferPanel = struct {
         while (i < indent_count) : (i += 1) {
             try self.buffer.insert(&[_]u8{indent_char}, line_index, 0);
         }
+    }
 
+    fn normalIndentLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const line_index = (try self.getFixedCursorPos()).line;
+        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
+        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        var level: isize = 0;
+
+        var i: usize = self.getPrevUnindentedLine(line_index);
+        while (i <= line_index) : (i += 1) {
+            const line_content = self.buffer.lines.items[i].content.items;
+            increase_indent_regex.setBuffer(line_content);
+            decrease_indent_regex.setBuffer(line_content);
+
+            if (i != line_index and increase_indent_regex.nextMatch(null, null) != null) {
+                level += 1;
+            }
+
+            if (decrease_indent_regex.nextMatch(null, null) != null) {
+                level -= 1;
+            }
+        }
+
+        try self.autoIndentLine(line_index, @intCast(usize, std.math.max(0, level)));
+
+        try self.fixupCursor();
+    }
+
+    fn visualIndentLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
+        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
+
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        var level: isize = 0;
+
+        var i: usize = self.getPrevUnindentedLine(start_pos.line);
+        while (i <= end_pos.line) : (i += 1) {
+            {
+                const line_content = self.buffer.lines.items[i].content.items;
+                decrease_indent_regex.setBuffer(line_content);
+                if (decrease_indent_regex.nextMatch(null, null) != null) {
+                    level -= 1;
+                }
+            }
+
+            if (start_pos.line <= i and i <= end_pos.line) {
+                try self.autoIndentLine(i, @intCast(usize, std.math.max(0, level)));
+            }
+
+            {
+                const line_content = self.buffer.lines.items[i].content.items;
+                increase_indent_regex.setBuffer(line_content);
+                if (increase_indent_regex.nextMatch(null, null) != null) {
+                    level += 1;
+                }
+            }
+        }
+
+        self.mode = .normal;
         try self.fixupCursor();
     }
 
@@ -1651,6 +1699,7 @@ pub const BufferPanel = struct {
 
         if (BufferPanel.addBufferFromFile(self.allocator, path)) |new_buffer| {
             self.buffer = new_buffer;
+            self.resetView();
         } else |err| {
             std.log.info("Failed to open buffer: {s}", .{path});
         }
@@ -1666,8 +1715,10 @@ pub const BufferPanel = struct {
         visual_line_key_map = try KeyMap.init(allocator);
 
         g_plain_filetype = try FileType.init(allocator, "plain", .{
-            .increase_indentation_pattern = "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
-            .decrease_indentation_pattern = "^((?!.*?\\/\\*).*\\*/)?\\s*[\\)\\}\\]].*$",
+            .increase_indent_pattern = "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
+            .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*/)?\\s*[\\)\\}\\]].*$",
+            .indent_next_line_pattern = "^\\s*(for|while|if|else)\\b(?!.*[;{}]\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$)",
+            .unindented_line_pattern = null,
         });
         try registerFileType(g_plain_filetype);
 
@@ -1740,12 +1791,14 @@ pub const BufferPanel = struct {
         try visual_key_map.bind("d", visualModeDelete);
         try visual_key_map.bind("y", visualModeYank);
         try visual_key_map.bind("p", visualModePaste);
+        try visual_key_map.bind("=", visualIndentLine);
 
         try visual_line_key_map.bind("<esc>", exitVisualLineMode);
         try visual_line_key_map.bind("V", exitVisualLineMode);
         try visual_line_key_map.bind("d", visualLineModeDelete);
         try visual_line_key_map.bind("y", visualLineModeYank);
         try visual_line_key_map.bind("p", visualLineModePaste);
+        try visual_line_key_map.bind("=", visualIndentLine);
 
         try command_registry.register("w", commandWriteFile);
         try command_registry.register("e", commandEditFile);
