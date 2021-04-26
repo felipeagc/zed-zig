@@ -82,7 +82,7 @@ pub const Regex = struct {
         self.range = self.end;
     }
 
-    pub fn nextMatch(self: *Regex, match_start: *usize, match_end: *usize) ?usize {
+    pub fn nextMatch(self: *Regex, maybe_match_start: ?*usize, maybe_match_end: ?*usize) ?usize {
         if (self.str == null or self.start == self.range) {
             return null;
         }
@@ -109,8 +109,8 @@ pub const Regex = struct {
                     return null;
                 }
 
-                match_start.* = @intCast(usize, region.beg[0]);
-                match_end.* = @intCast(usize, region.end[0]);
+                if (maybe_match_start) |match_start| match_start.* = @intCast(usize, region.beg[0]);
+                if (maybe_match_end) |match_end| match_end.* = @intCast(usize, region.end[0]);
 
                 self.start = self.str + @intCast(usize, region.end[0]);
 

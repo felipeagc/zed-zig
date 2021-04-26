@@ -148,6 +148,65 @@ pub const BufferPanel = struct {
         return g_plain_filetype;
     }
 
+    fn getLeadingWhitespaceCodepoint(line: []const u8) usize {
+        var length: usize = 0;
+
+        var iter = std.unicode.Utf8View.initUnchecked(line).iterator();
+        while (iter.nextCodepoint()) |codepoint| {
+            switch (codepoint) {
+                ' ', '\t' => length += 1,
+                else => break,
+            }
+        }
+
+        return length;
+    }
+
+    fn getTextIndentLevel(line: []const u8, tab_width: usize) usize {
+        var level: f64 = 0.0;
+
+        var iter = std.unicode.Utf8View.initUnchecked(line).iterator();
+        while (iter.nextCodepoint()) |codepoint| {
+            switch (codepoint) {
+                ' ' => level += 1.0 / @intToFloat(f64, tab_width),
+                '\t' => level += 1,
+                else => break,
+            }
+        }
+
+        return @floatToInt(usize, std.math.trunc(level));
+    }
+
+    fn getLineIndentLevel(self: *BufferPanel, line_index: usize) usize {
+        if (line_index >= self.buffer.lines.items.len) return 0;
+
+        const first_line_content = self.buffer.lines.items[line_index].content.items;
+
+        const increase_indentation_regex = &self.buffer.filetype.increase_indentation_regex;
+        const decrease_indentation_regex = &self.buffer.filetype.decrease_indentation_regex;
+
+        const tab_width = @intCast(usize, self.buffer.filetype.tab_width);
+
+        var i: isize = @intCast(isize, line_index) - 1;
+        while (i >= 0) : (i -= 1) {
+            const line_content = self.buffer.lines.items[@intCast(usize, i)].content.items;
+            increase_indentation_regex.setBuffer(line_content);
+            decrease_indentation_regex.setBuffer(line_content);
+            const line_ident_level = getTextIndentLevel(line_content, tab_width);
+            if (i != line_index and increase_indentation_regex.nextMatch(null, null) != null) {
+                decrease_indentation_regex.setBuffer(first_line_content);
+                if (decrease_indentation_regex.nextMatch(null, null) != null) {
+                    return line_ident_level;
+                }
+                return line_ident_level + 1;
+            } else if (decrease_indentation_regex.nextMatch(null, null) != null) {
+                return if (line_ident_level > 0) line_ident_level - 1 else line_ident_level;
+            }
+        }
+
+        return 0;
+    }
+
     fn scrollToCursor(self: *BufferPanel) void {
         self.scroll_to_cursor = true;
     }
@@ -388,7 +447,7 @@ pub const BufferPanel = struct {
 
                 var char_advance = try font.getCharAdvance(font_size, codepoint);
                 if (codepoint == '\t') {
-                    char_advance *= @intCast(i32, options.tab_width);
+                    char_advance *= @intCast(i32, self.buffer.filetype.tab_width);
                 }
                 cursor_x += char_advance;
                 i += 1;
@@ -806,7 +865,7 @@ pub const BufferPanel = struct {
             try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
 
             if (mem.eql(u8, first_content, " ")) {
-                while (self.cursor.column > 0 and self.cursor.column % editor.getOptions().tab_width != 0) {
+                while (self.cursor.column > 0 and self.cursor.column % self.buffer.filetype.tab_width != 0) {
                     const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column - 1, 1);
                     defer self.allocator.free(content);
                     if (!mem.eql(u8, content, " ")) {
@@ -834,8 +893,8 @@ pub const BufferPanel = struct {
 
     fn insertModeInsertTab(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        if (editor.getOptions().expandtab) {
-            const tab_width = editor.getOptions().tab_width;
+        if (self.buffer.filetype.expand_tab) {
+            const tab_width = self.buffer.filetype.tab_width;
             const spaces = tab_width - (@intCast(u32, self.cursor.column) % 4);
 
             var i: u32 = 0;
@@ -1543,6 +1602,35 @@ pub const BufferPanel = struct {
         });
     }
 
+    fn normalIndentLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const filetype = self.buffer.filetype;
+
+        const line_index = (try self.getFixedCursorPos()).line;
+        const indent_level = self.getLineIndentLevel(line_index);
+        const line_content = self.buffer.lines.items[line_index].content.items;
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        try self.fixupCursor();
+
+        const leading_whitespace = getLeadingWhitespaceCodepoint(line_content);
+
+        try self.buffer.delete(line_index, 0, leading_whitespace);
+
+        const indent_char: u8 = if (filetype.expand_tab) ' ' else '\t';
+        const indent_count: usize = if (filetype.expand_tab) indent_level * filetype.tab_width else indent_level;
+
+        var i: usize = 0;
+        while (i < indent_count) : (i += 1) {
+            try self.buffer.insert(&[_]u8{indent_char}, line_index, 0);
+        }
+
+        try self.fixupCursor();
+    }
+
     fn commandWriteFile(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
@@ -1577,7 +1665,10 @@ pub const BufferPanel = struct {
         visual_key_map = try KeyMap.init(allocator);
         visual_line_key_map = try KeyMap.init(allocator);
 
-        g_plain_filetype = try FileType.init(allocator, "plain");
+        g_plain_filetype = try FileType.init(allocator, "plain", .{
+            .increase_indentation_pattern = "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
+            .decrease_indentation_pattern = "^((?!.*?\\/\\*).*\\*/)?\\s*[\\)\\}\\]].*$",
+        });
         try registerFileType(g_plain_filetype);
 
         const normal_key_maps = [_]*KeyMap{
@@ -1629,6 +1720,7 @@ pub const BufferPanel = struct {
         try normal_key_map.bind("u", undo);
         try normal_key_map.bind("C-r", redo);
         try normal_key_map.bind("r <?>", normalReplaceChar);
+        try normal_key_map.bind("= =", normalIndentLine);
 
         try normal_key_map.bind("/", normalModeForwardSearch);
         try normal_key_map.bind("?", normalModeBackwardSearch);

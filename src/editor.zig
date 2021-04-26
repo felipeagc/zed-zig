@@ -12,8 +12,6 @@ pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
 pub const EditorOptions = struct {
     main_font: *renderer.Font,
     main_font_size: u32 = 18,
-    tab_width: u32 = 4,
-    expandtab: bool = true,
     scroll_margin: u32 = 5,
     status_line_padding: u32 = 4,
     minibuffer_line_padding: u32 = 4,
