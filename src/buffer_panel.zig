@@ -737,6 +737,10 @@ pub const BufferPanel = struct {
         self.mode = .insert;
         self.cursor.column = 0;
         self.cursor.line += 1;
+
+        try self.autoIndentSingleLine(self.cursor.line);
+        self.cursor.column = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(self.cursor.line));
+
         try self.fixupCursor();
     }
 
@@ -751,6 +755,10 @@ pub const BufferPanel = struct {
 
         self.mode = .insert;
         self.cursor.column = 0;
+
+        try self.autoIndentSingleLine(self.cursor.line);
+        self.cursor.column = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(self.cursor.line));
+
         try self.fixupCursor();
     }
 
@@ -868,6 +876,14 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         try self.buffer.insert("\n", self.cursor.line, self.cursor.column);
         try insertModeMoveRight(panel, &[_][]const u8{});
+
+        const line_index = (try self.getFixedCursorPos()).line;
+
+        try self.autoIndentSingleLine(line_index);
+        const line = try self.buffer.getLine(line_index);
+        self.cursor.column = try std.unicode.utf8CountCodepoints(line);
+
+        try self.fixupCursor();
     }
 
     fn insertModeInsertTab(panel: *editor.Panel, args: [][]const u8) anyerror!void {
@@ -1587,7 +1603,7 @@ pub const BufferPanel = struct {
         });
     }
 
-    fn autoIndentLine(self: *BufferPanel, line_index: usize, indent_level: usize) !void {
+    fn indentLine(self: *BufferPanel, line_index: usize, indent_level: usize) !void {
         const filetype = self.buffer.filetype;
 
         const line_content = self.buffer.lines.items[line_index].content.items;
@@ -1605,15 +1621,9 @@ pub const BufferPanel = struct {
         }
     }
 
-    fn normalIndentLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
-        var self = @fieldParentPtr(BufferPanel, "panel", panel);
-
-        const line_index = (try self.getFixedCursorPos()).line;
+    fn autoIndentSingleLine(self: *BufferPanel, line_index: usize) !void {
         const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
         const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
-
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
 
         var level: isize = 0;
 
@@ -1632,16 +1642,72 @@ pub const BufferPanel = struct {
             }
         }
 
-        try self.autoIndentLine(line_index, @intCast(usize, std.math.max(0, level)));
+        try self.indentLine(line_index, @intCast(usize, std.math.max(0, level)));
+    }
+
+    fn autoIndentRegion(self: *BufferPanel, start_line: usize, end_line: usize) !void {
+        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
+        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
+
+        var level: isize = 0;
+
+        var i: usize = self.getPrevUnindentedLine(start_line);
+        while (i <= end_line) : (i += 1) {
+            {
+                const line_content = self.buffer.lines.items[i].content.items;
+                decrease_indent_regex.setBuffer(line_content);
+                if (decrease_indent_regex.nextMatch(null, null) != null) {
+                    level -= 1;
+                    // std.log.info("decrease: \"{s}\"", .{line_content});
+                }
+            }
+
+            if (start_line <= i and i <= end_line) {
+                try self.indentLine(i, @intCast(usize, std.math.max(0, level)));
+            }
+
+            {
+                const line_content = self.buffer.lines.items[i].content.items;
+                increase_indent_regex.setBuffer(line_content);
+                if (increase_indent_regex.nextMatch(null, null) != null) {
+                    level += 1;
+                    // std.log.info("increase: \"{s}\"", .{line_content});
+                }
+            }
+        }
+    }
+
+    fn normalIndentLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const line_index = (try self.getFixedCursorPos()).line;
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        try self.autoIndentSingleLine(line_index);
+
+        try self.fixupCursor();
+    }
+
+    fn normalIndentToEnd(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const line_count = self.buffer.getLineCount();
+
+        const start_line = (try self.getFixedCursorPos()).line;
+        const end_line = if (line_count > 0) line_count - 1 else line_count;
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        try self.autoIndentRegion(start_line, end_line);
 
         try self.fixupCursor();
     }
 
     fn visualIndentLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-
-        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
-        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
 
         var start_pos = Position{};
         var end_pos = Position{};
@@ -1650,30 +1716,7 @@ pub const BufferPanel = struct {
         self.beginCheckpoint();
         defer self.endCheckpoint();
 
-        var level: isize = 0;
-
-        var i: usize = self.getPrevUnindentedLine(start_pos.line);
-        while (i <= end_pos.line) : (i += 1) {
-            {
-                const line_content = self.buffer.lines.items[i].content.items;
-                decrease_indent_regex.setBuffer(line_content);
-                if (decrease_indent_regex.nextMatch(null, null) != null) {
-                    level -= 1;
-                }
-            }
-
-            if (start_pos.line <= i and i <= end_pos.line) {
-                try self.autoIndentLine(i, @intCast(usize, std.math.max(0, level)));
-            }
-
-            {
-                const line_content = self.buffer.lines.items[i].content.items;
-                increase_indent_regex.setBuffer(line_content);
-                if (increase_indent_regex.nextMatch(null, null) != null) {
-                    level += 1;
-                }
-            }
-        }
+        try self.autoIndentRegion(start_pos.line, end_pos.line);
 
         self.mode = .normal;
         try self.fixupCursor();
@@ -1716,7 +1759,7 @@ pub const BufferPanel = struct {
 
         g_plain_filetype = try FileType.init(allocator, "plain", .{
             .increase_indent_pattern = "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
-            .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*/)?\\s*[\\)\\}\\]].*$",
+            .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
             .indent_next_line_pattern = "^\\s*(for|while|if|else)\\b(?!.*[;{}]\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$)",
             .unindented_line_pattern = null,
         });
@@ -1772,6 +1815,7 @@ pub const BufferPanel = struct {
         try normal_key_map.bind("C-r", redo);
         try normal_key_map.bind("r <?>", normalReplaceChar);
         try normal_key_map.bind("= =", normalIndentLine);
+        try normal_key_map.bind("= G", normalIndentToEnd);
 
         try normal_key_map.bind("/", normalModeForwardSearch);
         try normal_key_map.bind("?", normalModeBackwardSearch);

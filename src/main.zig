@@ -35,13 +35,13 @@ pub fn main() anyerror!void {
     try editor.init(allocator);
     defer editor.deinit();
 
-    const options = try args_parser.parseForCurrentProcess(struct{}, allocator);
+    const options = try args_parser.parseForCurrentProcess(struct {}, allocator);
     defer options.deinit();
 
     if (options.positionals.len > 0) {
         for (options.positionals) |path| {
             const buffer = BufferPanel.addBufferFromFile(allocator, path) catch |err| {
-                std.log.info("Failed to open buffer: \"{s}\": {}", .{path, err});
+                std.log.info("Failed to open buffer: \"{s}\": {}", .{ path, err });
                 continue;
             };
             try editor.addPanel(try BufferPanel.init(allocator, buffer));
