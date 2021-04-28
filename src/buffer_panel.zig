@@ -461,6 +461,8 @@ pub const BufferPanel = struct {
     fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!bool {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
+        const filetype = self.buffer.filetype;
+
         return switch (self.mode) {
             .normal => try normal_key_map.onChar(codepoint, panel),
             .visual => try visual_key_map.onChar(codepoint, panel),
@@ -468,10 +470,31 @@ pub const BufferPanel = struct {
             .insert => blk: {
                 var buf = [4]u8{ 0, 0, 0, 0 };
                 const len = try std.unicode.utf8Encode(@intCast(u21, codepoint), &buf);
-                try self.buffer.insert(buf[0..len], self.cursor.line, self.cursor.column);
+                const inserted_buf = buf[0..len];
+                try self.buffer.insert(inserted_buf, self.cursor.line, self.cursor.column);
                 self.cursor.column += 1;
 
                 try self.fixupCursor();
+
+                for (filetype.brackets) |bracket| {
+                    if (mem.eql(u8, bracket.open, inserted_buf) or
+                        mem.eql(u8, bracket.close, inserted_buf))
+                    {
+                        const leading_whitespace_before =
+                            getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
+
+                        if (self.cursor.column <= (leading_whitespace_before + 1)) {
+                            try self.autoIndentSingleLine(self.cursor.line);
+
+                            const leading_whitespace_after =
+                                getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
+                            self.cursor.column = leading_whitespace_after + 1;
+                        }
+
+                        break;
+                    }
+                }
+
                 break :blk true;
             },
         };
@@ -1456,8 +1479,7 @@ pub const BufferPanel = struct {
 
         var i: usize = cursor.line;
         outer: while (i < self.buffer.lines.items.len) : (i += 1) {
-            const line = self.buffer.lines.items[i];
-            const content = line.content.items;
+            const content = try self.buffer.getLine(i);
 
             var codepoint_index: usize = 0;
             var byte_index: usize = 0;
@@ -1971,6 +1993,11 @@ pub const BufferPanel = struct {
             .indent_next_line_pattern = "^\\s*(for|while|if|else)\\b(?!.*[;{}]\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$)",
             .zero_indent_pattern = "^\\s*#",
             .formatter_command = "clang-format",
+            .brackets = &[_]FileType.Bracket{
+                .{ .open = "{", .close = "}" },
+                .{ .open = "(", .close = ")" },
+                .{ .open = "[", .close = "]" },
+            },
         });
         try registerFileType(g_plain_filetype);
 

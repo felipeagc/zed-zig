@@ -3,16 +3,6 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const Regex = @import("regex.zig").Regex;
 
-pub const FileTypeOptions = struct {
-    increase_indent_pattern: []const u8,
-    decrease_indent_pattern: []const u8,
-    indent_next_line_pattern: ?[]const u8 = null,
-    zero_indent_pattern: ?[]const u8 = null,
-    tab_width: u32 = 4,
-    expand_tab: bool = true,
-    formatter_command: ?[]const u8 = null,
-};
-
 pub const FileType = struct {
     allocator: *Allocator,
     name: []const u8,
@@ -23,8 +13,25 @@ pub const FileType = struct {
     tab_width: usize,
     expand_tab: bool,
     formatter_command: ?[]const u8,
+    brackets: []Bracket,
 
-    pub fn init(allocator: *Allocator, name: []const u8, options: FileTypeOptions) !*FileType {
+    pub const Bracket = struct {
+        open: []const u8,
+        close: []const u8,
+    };
+
+    pub const Options = struct {
+        increase_indent_pattern: []const u8,
+        decrease_indent_pattern: []const u8,
+        indent_next_line_pattern: ?[]const u8 = null,
+        zero_indent_pattern: ?[]const u8 = null,
+        tab_width: u32 = 4,
+        expand_tab: bool = true,
+        formatter_command: ?[]const u8 = null,
+        brackets: []const Bracket = &[_]Bracket{},
+    };
+
+    pub fn init(allocator: *Allocator, name: []const u8, options: Options) !*FileType {
         var self = try allocator.create(FileType);
         errdefer allocator.destroy(self);
 
@@ -46,6 +53,12 @@ pub const FileType = struct {
             try zero_indent_regex.?.addPattern(0, pattern);
         }
 
+        var brackets = try allocator.alloc(Bracket, options.brackets.len);
+        for (options.brackets) |bracket, i| {
+            brackets[i].open = try allocator.dupe(u8, bracket.open);
+            brackets[i].close = try allocator.dupe(u8, bracket.close);
+        }
+
         self.* = FileType{
             .allocator = allocator,
             .name = try allocator.dupe(u8, name),
@@ -56,12 +69,18 @@ pub const FileType = struct {
             .tab_width = options.tab_width,
             .expand_tab = options.expand_tab,
             .formatter_command = if (options.formatter_command) |command| try allocator.dupe(u8, command) else null,
+            .brackets = brackets,
         };
 
         return self;
     }
 
     pub fn deinit(self: *FileType) void {
+        for (self.brackets) |bracket| {
+            self.allocator.free(bracket.open);
+            self.allocator.free(bracket.close);
+        }
+        self.allocator.free(self.brackets);
         if (self.formatter_command) |command| {
             self.allocator.free(command);
         }
