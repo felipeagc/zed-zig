@@ -145,31 +145,6 @@ pub const BufferPanel = struct {
         return g_plain_filetype;
     }
 
-    fn getLeadingWhitespaceCodepoint(line: []const u8) usize {
-        var length: usize = 0;
-
-        var iter = std.unicode.Utf8View.initUnchecked(line).iterator();
-        while (iter.nextCodepoint()) |codepoint| {
-            switch (codepoint) {
-                ' ', '\t' => length += 1,
-                else => break,
-            }
-        }
-
-        return length;
-    }
-
-    fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) usize {
-        var i: isize = @intCast(isize, line_index) - 1;
-        while (i >= 0) : (i -= 1) {
-            const line_content = self.buffer.lines.items[@intCast(usize, i)].content.items;
-            if (line_content.len > 0 and line_content[0] != ' ' and line_content[0] != '\t') {
-                break;
-            }
-        }
-        return @intCast(usize, std.math.max(0, i));
-    }
-
     fn scrollToCursor(self: *BufferPanel) void {
         self.scroll_to_cursor = true;
     }
@@ -1604,12 +1579,55 @@ pub const BufferPanel = struct {
         });
     }
 
+    fn getLeadingWhitespaceCodepointCount(line: []const u8) usize {
+        var length: usize = 0;
+
+        var iter = std.unicode.Utf8View.initUnchecked(line).iterator();
+        while (iter.nextCodepoint()) |codepoint| {
+            switch (codepoint) {
+                ' ', '\t' => length += 1,
+                else => break,
+            }
+        }
+
+        return length;
+    }
+
+    fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) usize {
+        var i: isize = @intCast(isize, line_index) - 1;
+        while (i >= 0) : (i -= 1) {
+            const line_content = self.buffer.lines.items[@intCast(usize, i)].content.items;
+            if (line_content.len > 0 and line_content[0] != ' ' and line_content[0] != '\t') {
+                break;
+            }
+        }
+        return @intCast(usize, std.math.max(0, i));
+    }
+
+    fn getLineIndentLevel(self: *BufferPanel, line_index: usize) !f64 {
+        const filetype = self.buffer.filetype;
+
+        const line_content = try self.buffer.getLine(line_index);
+
+        var level: f64 = 0.0;
+        var iter = std.unicode.Utf8View.initUnchecked(line_content).iterator();
+        while (iter.nextCodepoint()) |c| {
+            switch (c) {
+                '\t' => level += 1.0,
+                ' ' => level += (1.0 / @intToFloat(f64, filetype.tab_width)),
+                else => break,
+            }
+        }
+
+        return level;
+    }
+
     fn indentLine(self: *BufferPanel, line_index: usize, indent_level: usize) !void {
         const filetype = self.buffer.filetype;
 
         const line_content = self.buffer.lines.items[line_index].content.items;
 
-        const leading_whitespace = getLeadingWhitespaceCodepoint(line_content);
+        const leading_whitespace = getLeadingWhitespaceCodepointCount(line_content);
 
         try self.buffer.delete(line_index, 0, leading_whitespace);
 
@@ -1721,6 +1739,70 @@ pub const BufferPanel = struct {
 
         self.mode = .normal;
         try self.fixupCursor();
+    }
+
+    fn normalLeftShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        const line_index = (try self.getFixedCursorPos()).line;
+
+        const indent_level_float = try self.getLineIndentLevel(line_index);
+        const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        try self.indentLine(line_index, if (indent_level > 0) indent_level - 1 else 0);
+    }
+
+    fn normalRightShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+        const line_index = (try self.getFixedCursorPos()).line;
+
+        const indent_level_float = try self.getLineIndentLevel(line_index);
+        const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        try self.indentLine(line_index, indent_level + 1);
+    }
+
+    fn visualLeftShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        var line_index = start_pos.line;
+        while (line_index <= end_pos.line) : (line_index += 1) {
+            const indent_level_float = try self.getLineIndentLevel(line_index);
+            const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+
+            try self.indentLine(line_index, if (indent_level > 0) indent_level - 1 else 0);
+        }
+    }
+
+    fn visualRightShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        var start_pos = Position{};
+        var end_pos = Position{};
+        try self.getSelectionRegion(&start_pos, &end_pos);
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        var line_index = start_pos.line;
+        while (line_index <= end_pos.line) : (line_index += 1) {
+            const indent_level_float = try self.getLineIndentLevel(line_index);
+            const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+
+            try self.indentLine(line_index, indent_level + 1);
+        }
     }
 
     fn runFormatter(panel: *editor.Panel, _: [][]const u8) anyerror!void {
@@ -1882,6 +1964,8 @@ pub const BufferPanel = struct {
         try normal_key_map.bind("r <?>", normalReplaceChar);
         try normal_key_map.bind("= =", normalIndentLine);
         try normal_key_map.bind("= G", normalIndentToEnd);
+        try normal_key_map.bind("< <", normalLeftShift);
+        try normal_key_map.bind("> >", normalRightShift);
         try normal_key_map.bind("<space> m f", runFormatter);
 
         try normal_key_map.bind("/", normalModeForwardSearch);
@@ -1903,6 +1987,8 @@ pub const BufferPanel = struct {
         try visual_key_map.bind("y", visualModeYank);
         try visual_key_map.bind("p", visualModePaste);
         try visual_key_map.bind("=", visualIndentLine);
+        try visual_key_map.bind("<", visualLeftShift);
+        try visual_key_map.bind(">", visualRightShift);
 
         try visual_line_key_map.bind("<esc>", exitVisualLineMode);
         try visual_line_key_map.bind("V", exitVisualLineMode);
@@ -1910,6 +1996,8 @@ pub const BufferPanel = struct {
         try visual_line_key_map.bind("y", visualLineModeYank);
         try visual_line_key_map.bind("p", visualLineModePaste);
         try visual_line_key_map.bind("=", visualIndentLine);
+        try visual_line_key_map.bind("<", visualLeftShift);
+        try visual_line_key_map.bind(">", visualRightShift);
 
         try command_registry.register("w", commandWriteFile);
         try command_registry.register("e", commandEditFile);
