@@ -471,27 +471,60 @@ pub const BufferPanel = struct {
                 var buf = [4]u8{ 0, 0, 0, 0 };
                 const len = try std.unicode.utf8Encode(@intCast(u21, codepoint), &buf);
                 const inserted_buf = buf[0..len];
-                try self.buffer.insert(inserted_buf, self.cursor.line, self.cursor.column);
+
+                try self.fixupCursor();
+
+                var is_closer = false;
+                var is_opener = false;
+                var used_bracket: ?FileType.Bracket = null;
+                for (filetype.brackets) |bracket| {
+                    is_opener = mem.eql(u8, bracket.open, inserted_buf);
+                    is_closer = mem.eql(u8, bracket.close, inserted_buf);
+                    if (is_opener or is_closer) {
+                        used_bracket = bracket;
+                        break;
+                    }
+                }
+
+                var skip_insert = false;
+                if (is_closer) {
+                    var iter = std.unicode.Utf8View.initUnchecked(
+                        try self.buffer.getLine(self.cursor.line),
+                    ).iterator();
+
+                    var codepoint_count: usize = 0;
+                    while (iter.nextCodepointSlice()) |c| {
+                        if (codepoint_count == self.cursor.column) {
+                            if (mem.eql(u8, c, used_bracket.?.close)) {
+                                skip_insert = true;
+                            }
+                            break;
+                        }
+                        codepoint_count += 1;
+                    }
+                }
+
+                if (!skip_insert) {
+                    if (is_opener) {
+                        try self.buffer.insert(used_bracket.?.close, self.cursor.line, self.cursor.column);
+                    }
+                    try self.buffer.insert(inserted_buf, self.cursor.line, self.cursor.column);
+                }
+
                 self.cursor.column += 1;
 
                 try self.fixupCursor();
 
-                for (filetype.brackets) |bracket| {
-                    if (mem.eql(u8, bracket.open, inserted_buf) or
-                        mem.eql(u8, bracket.close, inserted_buf))
-                    {
-                        const leading_whitespace_before =
+                if (is_opener or is_closer) {
+                    const leading_whitespace_before: usize =
+                        getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
+
+                    if (self.cursor.column <= (leading_whitespace_before + 1)) {
+                        try self.autoIndentSingleLine(self.cursor.line);
+
+                        const leading_whitespace_after: usize =
                             getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
-
-                        if (self.cursor.column <= (leading_whitespace_before + 1)) {
-                            try self.autoIndentSingleLine(self.cursor.line);
-
-                            const leading_whitespace_after =
-                                getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
-                            self.cursor.column = leading_whitespace_after + 1;
-                        }
-
-                        break;
+                        self.cursor.column = leading_whitespace_after + 1;
                     }
                 }
 
@@ -881,14 +914,29 @@ pub const BufferPanel = struct {
 
     fn insertModeInsertNewLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        const filetype = self.buffer.filetype;
+
         try self.buffer.insert("\n", self.cursor.line, self.cursor.column);
         try insertModeMoveRight(panel, &[_][]const u8{});
+        try self.fixupCursor();
 
-        const line_index = (try self.getFixedCursorPos()).line;
+        var found_bracket = false;
+        const prev_line_content = try self.buffer.getLine(self.cursor.line - 1);
+        const new_line_content = try self.buffer.getLine(self.cursor.line);
+        for (filetype.brackets) |bracket| {
+            if (mem.endsWith(u8, prev_line_content, bracket.open) and
+                mem.startsWith(u8, new_line_content, bracket.close))
+            {
+                found_bracket = true;
+                try self.buffer.insert("\n", self.cursor.line, self.cursor.column);
+                try self.autoIndentSingleLine(self.cursor.line + 1);
+                break;
+            }
+        }
 
-        try self.autoIndentSingleLine(line_index);
-        const line = try self.buffer.getLine(line_index);
-        self.cursor.column = getLeadingWhitespaceCodepointCount(line);
+        try self.autoIndentSingleLine(self.cursor.line);
+        self.cursor.column = getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
 
         try self.fixupCursor();
     }
@@ -1623,11 +1671,22 @@ pub const BufferPanel = struct {
         return length;
     }
 
-    fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) usize {
+    fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) !usize {
+        const filetype = self.buffer.filetype;
+        const increase_indent_regex = &filetype.increase_indent_regex;
+        const decrease_indent_regex = &filetype.increase_indent_regex;
+
         var i: isize = @intCast(isize, line_index) - 1;
         while (i >= 0) : (i -= 1) {
-            const line_content = self.buffer.lines.items[@intCast(usize, i)].content.items;
-            if (line_content.len > 0 and line_content[0] != ' ' and line_content[0] != '\t') {
+            const line_content = try self.buffer.getLine(@intCast(usize, i));
+            increase_indent_regex.setBuffer(line_content);
+            decrease_indent_regex.setBuffer(line_content);
+            if (line_content.len > 0 and
+                line_content[0] != ' ' and
+                line_content[0] != '\t' and
+                increase_indent_regex.nextMatch(null, null) == null and
+                decrease_indent_regex.nextMatch(null, null) == null)
+            {
                 break;
             }
         }
@@ -1687,7 +1746,7 @@ pub const BufferPanel = struct {
             }
         }
 
-        var i: usize = self.getPrevUnindentedLine(line_index);
+        var i: usize = try self.getPrevUnindentedLine(line_index);
         while (i <= line_index) : (i += 1) {
             const line_content = try self.buffer.getLine(i);
 
@@ -1725,7 +1784,7 @@ pub const BufferPanel = struct {
 
         var level: isize = 0;
 
-        var i: usize = self.getPrevUnindentedLine(start_line);
+        var i: usize = try self.getPrevUnindentedLine(start_line);
         while (i <= end_line) : (i += 1) {
             {
                 const line_content = try self.buffer.getLine(i);
@@ -1990,10 +2049,12 @@ pub const BufferPanel = struct {
         g_plain_filetype = try FileType.init(allocator, "plain", .{
             .increase_indent_pattern = "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
             .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
-            .indent_next_line_pattern = "^\\s*(for|while|if|else)\\b(?!.*[;{}]\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$)",
+            .indent_next_line_pattern = "^.*\\)\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$",
             .zero_indent_pattern = "^\\s*#",
             .formatter_command = "clang-format",
             .brackets = &[_]FileType.Bracket{
+                .{ .open = "\"", .close = "\"" },
+                .{ .open = "\'", .close = "\'" },
                 .{ .open = "{", .close = "}" },
                 .{ .open = "(", .close = ")" },
                 .{ .open = "[", .close = "]" },
