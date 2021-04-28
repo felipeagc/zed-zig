@@ -89,9 +89,12 @@ pub const Buffer = struct {
         var self = try Buffer.init(allocator, options);
         errdefer self.deinit();
 
-        try self.insertInternal(content, 0, 0, .{
-            .save_history = false,
-        });
+        self.lines.shrinkRetainingCapacity(0);
+
+        var iter = mem.split(content, "\n");
+        while (iter.next()) |line_content| {
+            try self.lines.append(try Line.init(self.allocator, line_content));
+        }
 
         return self;
     }
@@ -149,7 +152,13 @@ pub const Buffer = struct {
             const content = try self.getEntireContent(self.allocator);
             defer self.allocator.free(content);
 
-            try file.writeAll(content);
+            var content_to_write = content;
+
+            if (content_to_write.len >= 1 and '\n' == content_to_write[content_to_write.len - 1]) {
+                content_to_write = content_to_write[0 .. content_to_write.len - 1];
+            }
+
+            try file.writeAll(content_to_write);
 
             std.log.info("Wrote: {s}", .{path});
         } else {
