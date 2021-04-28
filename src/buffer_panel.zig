@@ -637,11 +637,19 @@ pub const BufferPanel = struct {
         self.beginCheckpoint();
         defer self.endCheckpoint();
 
-        const line = try self.buffer.getLine(self.cursor.line);
+        const line_index = (try self.getFixedCursorPos()).line;
+        if ((line_index + 1) >= self.buffer.getLineCount()) return;
+
+        const next_line_index = line_index + 1;
+        const next_line = try self.buffer.getLine(next_line_index);
+        const leading_whitespace = getLeadingWhitespaceCodepointCount(next_line);
+        try self.buffer.delete(next_line_index, 0, leading_whitespace); // delete next line's leading whitespace
+
+        const line = try self.buffer.getLine(line_index);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
-        try self.buffer.delete(self.cursor.line, line_length, 1); // delete newline
-        try self.buffer.insert(" ", self.cursor.line, line_length); // insert space
+        try self.buffer.delete(line_index, line_length, 1); // delete newline
+        try self.buffer.insert(" ", line_index, line_length); // insert space
 
         self.cursor.column = line_length;
         try self.fixupCursor();
