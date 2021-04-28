@@ -7,7 +7,6 @@ pub const FileTypeOptions = struct {
     increase_indent_pattern: []const u8,
     decrease_indent_pattern: []const u8,
     indent_next_line_pattern: ?[]const u8 = null,
-    unindented_line_pattern: ?[]const u8 = null,
     zero_indent_pattern: ?[]const u8 = null,
     tab_width: u32 = 4,
     expand_tab: bool = true,
@@ -20,7 +19,6 @@ pub const FileType = struct {
     increase_indent_regex: Regex,
     decrease_indent_regex: Regex,
     indent_next_line_regex: ?Regex = null,
-    unindented_line_regex: ?Regex = null,
     zero_indent_regex: ?Regex = null,
     tab_width: usize,
     expand_tab: bool,
@@ -42,12 +40,6 @@ pub const FileType = struct {
             try indent_next_line_regex.?.addPattern(0, pattern);
         }
 
-        var unindented_line_regex: ?Regex = null;
-        if (options.unindented_line_pattern) |pattern| {
-            unindented_line_regex = try Regex.init(allocator);
-            try unindented_line_regex.?.addPattern(0, pattern);
-        }
-
         var zero_indent_regex: ?Regex = null;
         if (options.zero_indent_pattern) |pattern| {
             zero_indent_regex = try Regex.init(allocator);
@@ -60,7 +52,6 @@ pub const FileType = struct {
             .increase_indent_regex = increase_indent_regex,
             .decrease_indent_regex = decrease_indent_regex,
             .indent_next_line_regex = indent_next_line_regex,
-            .unindented_line_regex = unindented_line_regex,
             .zero_indent_regex = zero_indent_regex,
             .tab_width = options.tab_width,
             .expand_tab = options.expand_tab,
@@ -77,9 +68,6 @@ pub const FileType = struct {
         self.increase_indent_regex.deinit();
         self.decrease_indent_regex.deinit();
         if (self.indent_next_line_regex) |*regex| {
-            regex.deinit();
-        }
-        if (self.unindented_line_regex) |*regex| {
             regex.deinit();
         }
         if (self.zero_indent_regex) |*regex| {

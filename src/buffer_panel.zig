@@ -1935,7 +1935,6 @@ pub const BufferPanel = struct {
             .increase_indent_pattern = "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
             .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
             .indent_next_line_pattern = "^\\s*(for|while|if|else)\\b(?!.*[;{}]\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$)",
-            .unindented_line_pattern = null,
             .zero_indent_pattern = "^\\s*#",
             .formatter_command = "clang-format",
         });
