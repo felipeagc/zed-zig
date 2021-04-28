@@ -865,7 +865,7 @@ pub const BufferPanel = struct {
 
         try self.autoIndentSingleLine(line_index);
         const line = try self.buffer.getLine(line_index);
-        self.cursor.column = try std.unicode.utf8CountCodepoints(line);
+        self.cursor.column = getLeadingWhitespaceCodepointCount(line);
 
         try self.fixupCursor();
     }
