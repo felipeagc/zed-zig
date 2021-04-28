@@ -1643,12 +1643,22 @@ pub const BufferPanel = struct {
     fn autoIndentSingleLine(self: *BufferPanel, line_index: usize) !void {
         const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
         const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
+        const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
 
         var level: isize = 0;
 
+        if (maybe_zero_indent_regex.*) |*zero_indent_regex| {
+            const line_content = try self.buffer.getLine(line_index);
+            zero_indent_regex.setBuffer(line_content);
+            if (zero_indent_regex.nextMatch(null, null) != null) {
+                try self.indentLine(line_index, 0);
+                return;
+            }
+        }
+
         var i: usize = self.getPrevUnindentedLine(line_index);
         while (i <= line_index) : (i += 1) {
-            const line_content = self.buffer.lines.items[i].content.items;
+            const line_content = try self.buffer.getLine(i);
             increase_indent_regex.setBuffer(line_content);
             decrease_indent_regex.setBuffer(line_content);
 
@@ -1667,6 +1677,7 @@ pub const BufferPanel = struct {
     fn autoIndentRegion(self: *BufferPanel, start_line: usize, end_line: usize) !void {
         const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
         const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
+        const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
 
         var level: isize = 0;
 
@@ -1683,6 +1694,14 @@ pub const BufferPanel = struct {
 
             if (start_line <= i and i <= end_line) {
                 try self.indentLine(i, @intCast(usize, std.math.max(0, level)));
+
+                if (maybe_zero_indent_regex.*) |*zero_indent_regex| {
+                    const line_content = try self.buffer.getLine(i);
+                    zero_indent_regex.setBuffer(line_content);
+                    if (zero_indent_regex.nextMatch(null, null) != null) {
+                        try self.indentLine(i, 0);
+                    }
+                }
             }
 
             {
@@ -1909,7 +1928,8 @@ pub const BufferPanel = struct {
             .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
             .indent_next_line_pattern = "^\\s*(for|while|if|else)\\b(?!.*[;{}]\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$)",
             .unindented_line_pattern = null,
-            .formatter_command = "zig fmt --stdin",
+            .zero_indent_pattern = "^\\s*#",
+            .formatter_command = "clang-format",
         });
         try registerFileType(g_plain_filetype);
 

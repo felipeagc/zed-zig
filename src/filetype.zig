@@ -19,9 +19,9 @@ pub const FileType = struct {
     name: []const u8,
     increase_indent_regex: Regex,
     decrease_indent_regex: Regex,
-    indent_next_line_regex: Regex,
-    unindented_line_regex: Regex,
-    zero_indent_regex: Regex,
+    indent_next_line_regex: ?Regex = null,
+    unindented_line_regex: ?Regex = null,
+    zero_indent_regex: ?Regex = null,
     tab_width: usize,
     expand_tab: bool,
     formatter_command: ?[]const u8,
@@ -36,19 +36,22 @@ pub const FileType = struct {
         var decrease_indent_regex = try Regex.init(allocator);
         try decrease_indent_regex.addPattern(0, options.decrease_indent_pattern);
 
-        var indent_next_line_regex = try Regex.init(allocator);
+        var indent_next_line_regex: ?Regex = null;
         if (options.indent_next_line_pattern) |pattern| {
-            try indent_next_line_regex.addPattern(0, pattern);
+            indent_next_line_regex = try Regex.init(allocator);
+            try indent_next_line_regex.?.addPattern(0, pattern);
         }
 
-        var unindented_line_regex = try Regex.init(allocator);
+        var unindented_line_regex: ?Regex = null;
         if (options.unindented_line_pattern) |pattern| {
-            try unindented_line_regex.addPattern(0, pattern);
+            unindented_line_regex = try Regex.init(allocator);
+            try unindented_line_regex.?.addPattern(0, pattern);
         }
 
-        var zero_indent_regex = try Regex.init(allocator);
+        var zero_indent_regex: ?Regex = null;
         if (options.zero_indent_pattern) |pattern| {
-            try zero_indent_regex.addPattern(0, pattern);
+            zero_indent_regex = try Regex.init(allocator);
+            try zero_indent_regex.?.addPattern(0, pattern);
         }
 
         self.* = FileType{
@@ -73,9 +76,15 @@ pub const FileType = struct {
         }
         self.increase_indent_regex.deinit();
         self.decrease_indent_regex.deinit();
-        self.indent_next_line_regex.deinit();
-        self.unindented_line_regex.deinit();
-        self.zero_indent_regex.deinit();
+        if (self.indent_next_line_regex) |*regex| {
+            regex.deinit();
+        }
+        if (self.unindented_line_regex) |*regex| {
+            regex.deinit();
+        }
+        if (self.zero_indent_regex) |*regex| {
+            regex.deinit();
+        }
         self.allocator.free(self.name);
         self.allocator.destroy(self);
     }
