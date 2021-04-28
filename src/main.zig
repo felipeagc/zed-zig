@@ -34,7 +34,6 @@ pub fn main() anyerror!void {
 
     try editor.init(allocator);
     defer editor.deinit();
-
     const options = try args_parser.parseForCurrentProcess(struct {}, allocator);
     defer options.deinit();
 
@@ -50,3 +49,4 @@ pub fn main() anyerror!void {
 
     editor.mainLoop();
 }
+

@@ -11,6 +11,7 @@ pub const FileTypeOptions = struct {
     zero_indent_pattern: ?[]const u8 = null,
     tab_width: u32 = 4,
     expand_tab: bool = true,
+    formatter_command: ?[]const u8 = null,
 };
 
 pub const FileType = struct {
@@ -23,6 +24,7 @@ pub const FileType = struct {
     zero_indent_regex: Regex,
     tab_width: usize,
     expand_tab: bool,
+    formatter_command: ?[]const u8,
 
     pub fn init(allocator: *Allocator, name: []const u8, options: FileTypeOptions) !*FileType {
         var self = try allocator.create(FileType);
@@ -59,12 +61,16 @@ pub const FileType = struct {
             .zero_indent_regex = zero_indent_regex,
             .tab_width = options.tab_width,
             .expand_tab = options.expand_tab,
+            .formatter_command = if (options.formatter_command) |command| try allocator.dupe(u8, command) else null,
         };
 
         return self;
     }
 
     pub fn deinit(self: *FileType) void {
+        if (self.formatter_command) |command| {
+            self.allocator.free(command);
+        }
         self.increase_indent_regex.deinit();
         self.decrease_indent_regex.deinit();
         self.indent_next_line_regex.deinit();

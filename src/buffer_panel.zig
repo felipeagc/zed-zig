@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
 const Buffer = @import("buffer.zig").Buffer;
@@ -1722,6 +1723,59 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
+    fn runFormatter(panel: *editor.Panel, _: [][]const u8) anyerror!void {
+        var self = @fieldParentPtr(BufferPanel, "panel", panel);
+
+        if (self.buffer.filetype.formatter_command == null) {
+            return;
+        }
+        const command = self.buffer.filetype.formatter_command.?;
+
+        const content = try self.buffer.getEntireContent(self.allocator);
+        defer self.allocator.free(content);
+
+        var args = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
+        if (builtin.os.tag != .windows) {
+            try args.append("/usr/bin/env");
+        }
+
+        var iter = mem.split(command, " ");
+        while (iter.next()) |part| {
+            try args.append(part);
+        }
+
+        if (args.items.len == 0) {
+            return error.InvalidFormatterCommand;
+        }
+
+        var proc = try std.ChildProcess.init(args.items, self.allocator);
+        defer proc.deinit();
+
+        proc.stdin_behavior = .Pipe;
+        proc.stdout_behavior = .Pipe;
+
+        try proc.spawn();
+
+        var writer = proc.stdin.?.writer();
+        try writer.writeAll(content);
+        proc.stdin.?.close();
+        proc.stdin = null;
+
+        var reader = proc.stdout.?.reader();
+        const formatted_content = try reader.readAllAlloc(self.allocator, content.len * 2);
+        defer self.allocator.free(formatted_content);
+
+        _ = try proc.wait();
+
+        self.beginCheckpoint();
+        defer self.endCheckpoint();
+
+        try self.buffer.delete(0, 0, content.len);
+        try self.buffer.insert(formatted_content, 0, 0);
+    }
+
     fn commandWriteFile(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
@@ -1762,6 +1816,7 @@ pub const BufferPanel = struct {
             .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
             .indent_next_line_pattern = "^\\s*(for|while|if|else)\\b(?!.*[;{}]\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$)",
             .unindented_line_pattern = null,
+            .formatter_command = "zig fmt --stdin",
         });
         try registerFileType(g_plain_filetype);
 
@@ -1816,6 +1871,7 @@ pub const BufferPanel = struct {
         try normal_key_map.bind("r <?>", normalReplaceChar);
         try normal_key_map.bind("= =", normalIndentLine);
         try normal_key_map.bind("= G", normalIndentToEnd);
+        try normal_key_map.bind("<space> m f", runFormatter);
 
         try normal_key_map.bind("/", normalModeForwardSearch);
         try normal_key_map.bind("?", normalModeBackwardSearch);
