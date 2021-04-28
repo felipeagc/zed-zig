@@ -1652,6 +1652,7 @@ pub const BufferPanel = struct {
         const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
         const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
         const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
+        const maybe_indent_next_line_regex = &self.buffer.filetype.indent_next_line_regex;
 
         var level: isize = 0;
 
@@ -1667,13 +1668,25 @@ pub const BufferPanel = struct {
         var i: usize = self.getPrevUnindentedLine(line_index);
         while (i <= line_index) : (i += 1) {
             const line_content = try self.buffer.getLine(i);
-            increase_indent_regex.setBuffer(line_content);
-            decrease_indent_regex.setBuffer(line_content);
 
+            if (i + 1 == line_index) {
+                if (maybe_indent_next_line_regex.*) |*indent_next_line_regex| {
+                    indent_next_line_regex.setBuffer(line_content);
+                    increase_indent_regex.setBuffer(try self.buffer.getLine(line_index));
+                    if (indent_next_line_regex.nextMatch(null, null) != null and
+                        increase_indent_regex.nextMatch(null, null) == null)
+                    {
+                        level += 1;
+                    }
+                }
+            }
+
+            increase_indent_regex.setBuffer(line_content);
             if (i != line_index and increase_indent_regex.nextMatch(null, null) != null) {
                 level += 1;
             }
 
+            decrease_indent_regex.setBuffer(line_content);
             if (decrease_indent_regex.nextMatch(null, null) != null) {
                 level -= 1;
             }
@@ -1686,19 +1699,38 @@ pub const BufferPanel = struct {
         const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
         const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
         const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
+        const maybe_indent_next_line_regex = &self.buffer.filetype.indent_next_line_regex;
 
         var level: isize = 0;
 
         var i: usize = self.getPrevUnindentedLine(start_line);
         while (i <= end_line) : (i += 1) {
             {
-                const line_content = self.buffer.lines.items[i].content.items;
+                const line_content = try self.buffer.getLine(i);
                 decrease_indent_regex.setBuffer(line_content);
                 if (decrease_indent_regex.nextMatch(null, null) != null) {
                     level -= 1;
                     // std.log.info("decrease: \"{s}\"", .{line_content});
                 }
             }
+
+            var prev_line_caused_indent = false;
+
+            if (i > 0) {
+                const prev_line_content = try self.buffer.getLine(i - 1);
+                const line_content = try self.buffer.getLine(i);
+
+                if (maybe_indent_next_line_regex.*) |*indent_next_line_regex| {
+                    indent_next_line_regex.setBuffer(prev_line_content);
+                    increase_indent_regex.setBuffer(line_content);
+
+                    prev_line_caused_indent =
+                        indent_next_line_regex.nextMatch(null, null) != null and
+                        increase_indent_regex.nextMatch(null, null) == null;
+                }
+            }
+
+            if (prev_line_caused_indent) level += 1;
 
             if (start_line <= i and i <= end_line) {
                 try self.indentLine(i, @intCast(usize, std.math.max(0, level)));
@@ -1712,8 +1744,10 @@ pub const BufferPanel = struct {
                 }
             }
 
+            if (prev_line_caused_indent) level -= 1;
+
             {
-                const line_content = self.buffer.lines.items[i].content.items;
+                const line_content = try self.buffer.getLine(i);
                 increase_indent_regex.setBuffer(line_content);
                 if (increase_indent_regex.nextMatch(null, null) != null) {
                     level += 1;
