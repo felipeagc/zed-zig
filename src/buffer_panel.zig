@@ -1754,6 +1754,7 @@ pub const BufferPanel = struct {
         defer proc.deinit();
 
         proc.stdin_behavior = .Pipe;
+        proc.stderr_behavior = .Pipe;
         proc.stdout_behavior = .Pipe;
 
         try proc.spawn();
@@ -1767,13 +1768,23 @@ pub const BufferPanel = struct {
         const formatted_content = try reader.readAllAlloc(self.allocator, content.len * 2);
         defer self.allocator.free(formatted_content);
 
+        var err_reader = proc.stderr.?.reader();
+        const error_content = try err_reader.readAllAlloc(self.allocator, 1024 * 16);
+        defer self.allocator.free(error_content);
+
         _ = try proc.wait();
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        if (error_content.len > 0) {
+            std.log.err("formatter: {s}", .{error_content});
+        }
 
-        try self.buffer.delete(0, 0, content.len);
-        try self.buffer.insert(formatted_content, 0, 0);
+        if (formatted_content.len > 0) {
+            self.beginCheckpoint();
+            defer self.endCheckpoint();
+
+            try self.buffer.delete(0, 0, content.len);
+            try self.buffer.insert(formatted_content, 0, 0);
+        }
     }
 
     fn commandWriteFile(panel: *editor.Panel, args: [][]const u8) anyerror!void {
