@@ -1,101 +1,101 @@
 const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
-const Allocator = std.mem.Allocator;
+const mem = std.mem;
+const Allocator = mem.Allocator;
 
 pub const Binding = union(enum) {
-    submap: *SubMap,
+    submap: void,
     command: editor.Command,
-};
-
-pub const SubMap = struct {
-    allocator: *Allocator,
-    map: std.StringHashMap(Binding),
-
-    fn init(allocator: *Allocator) !*SubMap {
-        var self = try allocator.create(@This());
-        self.* = .{
-            .allocator = allocator,
-            .map = std.StringHashMap(Binding).init(allocator),
-        };
-        return self;
-    }
-
-    fn deinit(self: *@This()) void {
-        var iter = self.map.iterator();
-        while (iter.next()) |entry| {
-            if (entry.value == .submap) {
-                entry.value.submap.deinit();
-            }
-        }
-
-        self.map.deinit();
-        self.allocator.destroy(self);
-    }
-
-    fn trigger(self: *@This(), key: []const u8, panel: *editor.Panel, got_binding: *bool) !?*SubMap {
-        if (self.map.get(key)) |binding| {
-            got_binding.* = true;
-
-            switch (binding) {
-                .submap => |submap| {
-                    return submap;
-                },
-                .command => |command| {
-                    try command(panel, &[_][]const u8{});
-                    return null;
-                },
-            }
-        }
-
-        got_binding.* = false;
-
-        return null;
-    }
-
-    fn triggerWildcard(self: *@This(), codepoint: u32, panel: *editor.Panel) !bool {
-        if (self.map.get("<?>")) |binding| {
-            if (binding == .command) {
-                var bytes = [4]u8{ 0, 0, 0, 0 };
-                const byte_length = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
-                try binding.command(panel, &[_][]const u8{bytes[0..byte_length]});
-                return true;
-            }
-        }
-
-        return false;
-    }
 };
 
 pub const KeyMap = struct {
     allocator: *Allocator,
-    root_submap: *SubMap,
-    current_submap: *SubMap,
+    map: std.StringArrayHashMap(Binding),
 
     pub fn init(allocator: *Allocator) !KeyMap {
-        var root_submap = try SubMap.init(allocator);
-
         return KeyMap{
             .allocator = allocator,
-            .root_submap = root_submap,
-            .current_submap = root_submap,
+            .map = std.StringArrayHashMap(Binding).init(allocator),
         };
     }
 
     pub fn deinit(self: *@This()) void {
-        self.root_submap.deinit();
+        var iter = self.map.iterator();
+        while (iter.next()) |entry| {
+            self.allocator.free(entry.key);
+        }
+        self.map.deinit();
     }
 
-    pub fn isAtRoot(self: *@This()) bool {
-        return self.current_submap == self.root_submap;
+    pub fn tryExecute(self: *@This(), panel: *editor.Panel, sequence: []const u8) !editor.KeyResult {
+        if (sequence.len == 0) return .none;
+
+        if (self.map.get(sequence)) |binding| {
+            switch (binding) {
+                .submap => return .submap,
+                .command => |command| {
+                    try command(panel, &[_][]const u8{});
+                    return .command;
+                },
+            }
+        } else {
+            var i: usize = sequence.len - 1;
+            while (i > 0) : (i -= 1) {
+                if (sequence[i] == ' ') break;
+            }
+
+            if (i == 0) return .none;
+
+            const wildcard_seq = try mem.concat(
+                self.allocator,
+                u8,
+                &.{ sequence[0 .. i + 1], "<?>" },
+            );
+            defer self.allocator.free(wildcard_seq);
+
+            if (self.map.get(wildcard_seq)) |binding| {
+                switch (binding) {
+                    .submap => return .submap,
+                    .command => |command| {
+                        try command(panel, &[1][]const u8{sequence[i + 1 ..]});
+                        return .command;
+                    },
+                }
+            }
+        }
+
+        return .none;
     }
 
-    pub fn onKey(
-        self: *@This(),
-        key: renderer.Key,
-        mods: u32,
-        panel: *editor.Panel,
-    ) !bool {
+    pub fn bind(self: *@This(), sequence: []const u8, command: editor.Command) !void {
+        var seq_builder = std.ArrayList(u8).init(self.allocator);
+        defer seq_builder.deinit();
+
+        var split_iter = std.mem.tokenize(sequence, " ");
+        while (split_iter.next()) |part| {
+            if (seq_builder.items.len > 0) try seq_builder.append(' ');
+            try seq_builder.appendSlice(part);
+
+            const semi_seq = try self.allocator.dupe(u8, seq_builder.items);
+
+            const is_action = split_iter.rest().len == 0;
+
+            const binding_existed = self.map.get(semi_seq) != null;
+
+            if (is_action) {
+                try self.map.put(semi_seq, Binding{ .command = command });
+            } else {
+                try self.map.put(semi_seq, Binding{ .submap = .{} });
+            }
+
+            if (binding_existed) {
+                self.allocator.free(semi_seq);
+            }
+        }
+    }
+
+    pub fn keyToKeySeq(allocator: *Allocator, key: renderer.Key, mods: u32) !?[]const u8 {
         const valid_key = switch (key) {
             // .@"<space>",
             .@"<esc>",
@@ -147,15 +147,15 @@ pub const KeyMap = struct {
             else => mods & (renderer.KeyMod.control | renderer.KeyMod.alt) != 0,
         };
 
-        if (!valid_key) return false;
+        if (!valid_key) return null;
 
         const key_name = @tagName(key);
         const control_prefix = if (mods & renderer.KeyMod.control != 0) "C-" else "";
         const alt_prefix = if (mods & renderer.KeyMod.alt != 0) "A-" else "";
         const shift_prefix = if (mods & renderer.KeyMod.shift != 0) "S-" else "";
 
-        const key_combo = try std.fmt.allocPrint(
-            self.allocator,
+        return try std.fmt.allocPrint(
+            allocator,
             "{s}{s}{s}{s}",
             .{
                 control_prefix,
@@ -164,90 +164,15 @@ pub const KeyMap = struct {
                 key_name,
             },
         );
-        defer self.allocator.free(key_combo);
-
-        var got_binding = false;
-        var maybe_submap = self.current_submap.trigger(key_combo, panel, &got_binding) catch |err| {
-            self.current_submap = self.root_submap;
-            std.log.info("onKey error: {}", .{err});
-            return got_binding;
-        };
-
-        if (maybe_submap) |next_submap| {
-            self.current_submap = next_submap;
-        } else {
-            self.current_submap = self.root_submap;
-        }
-
-        return got_binding;
     }
 
-    pub fn onChar(self: *@This(), codepoint: u32, panel: *editor.Panel) !bool {
+    pub fn codepointToKeySeq(allocator: *Allocator, codepoint: u32) !?[]const u8 {
         var bytes = [_]u8{0} ** 4;
         const key_name = if (codepoint == ' ') "<space>" else blk: {
             const byte_count = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);
             break :blk bytes[0..byte_count];
         };
 
-        var triggered_wildcard = self.current_submap.triggerWildcard(codepoint, panel) catch |err| {
-            self.current_submap = self.root_submap;
-            std.log.info("onChar error: {}", .{err});
-            return false;
-        };
-
-        if (triggered_wildcard) {
-            self.current_submap = self.root_submap;
-            return false;
-        }
-
-        var got_binding = false;
-        var maybe_submap = self.current_submap.trigger(key_name, panel, &got_binding) catch |err| {
-            self.current_submap = self.root_submap;
-            std.log.info("onChar error: {}", .{err});
-            return got_binding;
-        };
-
-        if (maybe_submap) |next_submap| {
-            self.current_submap = next_submap;
-        } else {
-            self.current_submap = self.root_submap;
-        }
-
-        return got_binding;
-    }
-
-    pub fn bind(self: *@This(), sequence: []const u8, command: editor.Command) !void {
-        var submap = self.root_submap;
-
-        var split_iter = std.mem.split(sequence, " ");
-        while (split_iter.next()) |part| {
-            const is_action = split_iter.rest().len == 0;
-
-            if (submap.map.get(part)) |binding| {
-                if (is_action) {
-                    if (binding == .submap) binding.submap.deinit();
-
-                    try submap.map.put(part, Binding{ .command = command });
-                } else if (binding == .command) {
-                    try submap.map.put(part, Binding{
-                        .submap = try SubMap.init(self.allocator),
-                    });
-                }
-            } else {
-                if (is_action) {
-                    try submap.map.put(part, Binding{ .command = command });
-                } else {
-                    try submap.map.put(part, Binding{
-                        .submap = try SubMap.init(self.allocator),
-                    });
-                }
-            }
-
-            if (!is_action) {
-                submap = submap.map.get(part).?.submap;
-            } else {
-                break;
-            }
-        }
+        return try allocator.dupe(u8, key_name);
     }
 };

@@ -18,6 +18,12 @@ pub const EditorOptions = struct {
     border_size: u32 = 3,
 };
 
+pub const KeyResult = enum {
+    none,
+    submap,
+    command,
+};
+
 const Face = struct {
     color: renderer.Color,
 };
@@ -39,6 +45,8 @@ const Editor = struct {
     global_keymap: KeyMap,
 
     minibuffer: *MiniBuffer,
+
+    key_buffer: std.ArrayList(u8),
 };
 
 pub const PanelVT = struct {
@@ -48,8 +56,8 @@ pub const PanelVT = struct {
     draw: fn (self: *Panel, rect: renderer.Rect) anyerror!void,
     deinit: fn (self: *Panel) void,
 
-    on_key: ?fn (self: *Panel, key: renderer.Key, mods: u32) anyerror!bool = null,
-    on_char: ?fn (self: *Panel, codepoint: u32) anyerror!bool = null,
+    on_key: ?fn (self: *Panel, key: renderer.Key, mods: u32) anyerror!KeyResult = null,
+    on_char: ?fn (self: *Panel, codepoint: u32) anyerror!KeyResult = null,
     on_scroll: ?fn (self: *Panel, dx: f64, dy: f64) anyerror!void = null,
 
     register_vt: ?fn (allocator: *Allocator) anyerror!void = null,
@@ -71,20 +79,20 @@ pub const Panel = struct {
         self.vt.deinit(self);
     }
 
-    pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!bool {
+    pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!KeyResult {
         if (panel.vt.on_key) |panel_on_key| {
             return panel_on_key(panel, key, mods);
         }
 
-        return false;
+        return KeyResult.none;
     }
 
-    pub fn onChar(panel: *Panel, codepoint: u32) anyerror!bool {
+    pub fn onChar(panel: *Panel, codepoint: u32) anyerror!KeyResult {
         if (panel.vt.on_char) |panel_on_char| {
             return panel_on_char(panel, codepoint);
         }
 
-        return false;
+        return KeyResult.none;
     }
 };
 
@@ -115,6 +123,13 @@ var g_editor: Editor = undefined;
 fn onKey(key: renderer.Key, mods: u32) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
 
+    if (key == .@"<esc>") {
+        if (g_editor.key_buffer.items.len > 0) {
+            resetKeyBuffer();
+            return;
+        }
+    }
+
     if (g_editor.minibuffer.active) {
         _ = g_editor.minibuffer.onKey(panel, key, mods) catch |err| {
             std.log.info("minibuffer onKey error: {}", .{err});
@@ -122,19 +137,40 @@ fn onKey(key: renderer.Key, mods: u32) void {
         return;
     }
 
-    var key_registered = false;
+    const maybe_seq: ?[]const u8 = KeyMap.keyToKeySeq(g_editor.allocator, key, mods) catch |err| {
+        std.log.info("sequence onKey error: {}", .{err});
+        return;
+    };
+    defer if (maybe_seq) |seq| {
+        g_editor.allocator.free(seq);
+    };
 
-    if (g_editor.global_keymap.isAtRoot()) {
-        key_registered = panel.onKey(key, mods) catch |err| blk: {
+    if (maybe_seq) |seq| {
+        if (g_editor.key_buffer.items.len > 0) g_editor.key_buffer.append(' ') catch unreachable;
+        g_editor.key_buffer.appendSlice(seq) catch unreachable;
+
+        var result = KeyResult.none;
+
+        result = panel.onKey(key, mods) catch |err| blk: {
             std.log.info("panel onKey error: {}", .{err});
-            break :blk true;
+            break :blk .none;
         };
-    }
 
-    if (!key_registered) {
-        _ = g_editor.global_keymap.onKey(key, mods, panel) catch |err| {
-            std.log.info("global onKey error: {}", .{err});
-        };
+        if (result != .command) {
+            const global_result = g_editor.global_keymap.tryExecute(
+                panel,
+                g_editor.key_buffer.items,
+            ) catch |err| blk: {
+                std.log.info("global onKey error: {}", .{err});
+                break :blk .none;
+            };
+
+            if (result != .submap) result = global_result;
+        }
+
+        if (result != .submap) {
+            resetKeyBuffer();
+        }
     }
 }
 
@@ -148,20 +184,49 @@ fn onChar(codepoint: u32) void {
         return;
     }
 
-    var key_registered = false;
+    const maybe_seq: ?[]const u8 = KeyMap.codepointToKeySeq(g_editor.allocator, codepoint) catch |err| {
+        std.log.info("sequence onChar error: {}", .{err});
+        return;
+    };
+    defer if (maybe_seq) |seq| {
+        g_editor.allocator.free(seq);
+    };
 
-    if (g_editor.global_keymap.isAtRoot()) {
-        key_registered = panel.onChar(codepoint) catch |err| blk: {
-            std.log.info("onChar error: {}", .{err});
-            break :blk true;
-        };
-    }
+    if (maybe_seq) |seq| {
+        if (g_editor.key_buffer.items.len > 0) g_editor.key_buffer.append(' ') catch unreachable;
+        g_editor.key_buffer.appendSlice(seq) catch unreachable;
 
-    if (!key_registered) {
-        _ = g_editor.global_keymap.onChar(codepoint, panel) catch |err| {
-            std.log.info("onChar error: {}", .{err});
+        var result = KeyResult.none;
+
+        result = panel.onChar(codepoint) catch |err| blk: {
+            std.log.info("panel onChar error: {}", .{err});
+            break :blk .none;
         };
+
+        if (result != .command) {
+            const global_result = g_editor.global_keymap.tryExecute(
+                panel,
+                g_editor.key_buffer.items,
+            ) catch |err| blk: {
+                std.log.info("global onChar error: {}", .{err});
+                break :blk .none;
+            };
+
+            if (result != .submap) result = global_result;
+        }
+
+        if (result != .submap) {
+            resetKeyBuffer();
+        }
     }
+}
+
+pub fn getKeyBuffer() []const u8 {
+    return g_editor.key_buffer.items;
+}
+
+fn resetKeyBuffer() void {
+    g_editor.key_buffer.shrinkRetainingCapacity(0);
 }
 
 fn onScroll(dx: f64, dy: f64) void {
@@ -249,6 +314,8 @@ pub fn init(allocator: *Allocator) !void {
         .global_commands = CommandRegistry.init(allocator),
 
         .minibuffer = try MiniBuffer.init(allocator),
+
+        .key_buffer = std.ArrayList(u8).init(allocator),
     };
 
     try setFace("foreground", .{ 0xff, 0xff, 0xff });
@@ -326,6 +393,7 @@ pub fn deinit() void {
         }
     }
 
+    g_editor.key_buffer.deinit();
     g_editor.minibuffer.deinit();
     g_editor.global_keymap.deinit();
     g_editor.global_commands.deinit();

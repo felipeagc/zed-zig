@@ -446,7 +446,7 @@ pub const BufferPanel = struct {
         self.allocator.destroy(self);
     }
 
-    fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!bool {
+    fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!editor.KeyResult {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         var map = switch (self.mode) {
             .normal => normal_key_map,
@@ -455,19 +455,27 @@ pub const BufferPanel = struct {
             .visual_line => visual_line_key_map,
         };
 
-        return map.onKey(key, mods, panel);
+        const key_buffer = editor.getKeyBuffer();
+        return try map.tryExecute(panel, key_buffer);
     }
 
-    fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!bool {
+    fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!editor.KeyResult {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         const filetype = self.buffer.filetype;
+        const key_buffer = editor.getKeyBuffer();
 
-        return switch (self.mode) {
-            .normal => try normal_key_map.onChar(codepoint, panel),
-            .visual => try visual_key_map.onChar(codepoint, panel),
-            .visual_line => try visual_line_key_map.onChar(codepoint, panel),
-            .insert => blk: {
+        switch (self.mode) {
+            .normal => {
+                return try normal_key_map.tryExecute(panel, key_buffer);
+            },
+            .visual => {
+                return try visual_key_map.tryExecute(panel, key_buffer);
+            },
+            .visual_line => {
+                return try visual_line_key_map.tryExecute(panel, key_buffer);
+            },
+            .insert => {
                 var buf = [4]u8{ 0, 0, 0, 0 };
                 const len = try std.unicode.utf8Encode(@intCast(u21, codepoint), &buf);
                 const inserted_buf = buf[0..len];
@@ -528,9 +536,9 @@ pub const BufferPanel = struct {
                     }
                 }
 
-                break :blk true;
+                return .none;
             },
-        };
+        }
     }
 
     fn onScroll(panel: *editor.Panel, dx: f64, dy: f64) anyerror!void {
