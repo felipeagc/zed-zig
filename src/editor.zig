@@ -37,6 +37,8 @@ const Editor = struct {
 
     global_commands: CommandRegistry,
     global_keymap: KeyMap,
+
+    minibuffer: *MiniBuffer,
 };
 
 pub const PanelVT = struct {
@@ -58,40 +60,28 @@ pub const PanelVT = struct {
 
 pub const Panel = struct {
     vt: *const PanelVT,
-    minibuffer: *MiniBuffer,
-    minibuffer_active: bool = false,
 
     pub fn init(allocator: *Allocator, vt: *const PanelVT) !Panel {
         return Panel{
             .vt = vt,
-            .minibuffer = try MiniBuffer.init(allocator),
         };
     }
 
     pub fn deinit(self: *Panel) void {
-        self.minibuffer.deinit();
         self.vt.deinit(self);
     }
 
     pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!bool {
-        if (panel.minibuffer_active) {
-            return MiniBuffer.onKey(panel, key, mods);
-        } else {
-            if (panel.vt.on_key) |panel_on_key| {
-                return panel_on_key(panel, key, mods);
-            }
+        if (panel.vt.on_key) |panel_on_key| {
+            return panel_on_key(panel, key, mods);
         }
 
         return false;
     }
 
     pub fn onChar(panel: *Panel, codepoint: u32) anyerror!bool {
-        if (panel.minibuffer_active) {
-            return MiniBuffer.onChar(panel, codepoint);
-        } else {
-            if (panel.vt.on_char) |panel_on_char| {
-                return panel_on_char(panel, codepoint);
-            }
+        if (panel.vt.on_char) |panel_on_char| {
+            return panel_on_char(panel, codepoint);
         }
 
         return false;
@@ -125,17 +115,25 @@ var g_editor: Editor = undefined;
 fn onKey(key: renderer.Key, mods: u32) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
 
-    const key_registered = if (g_editor.global_keymap.isAtRoot())
-        panel.onKey(key, mods) catch |err| blk: {
-            std.log.info("onKey error: {}", .{err});
+    if (g_editor.minibuffer.active) {
+        _ = g_editor.minibuffer.onKey(panel, key, mods) catch |err| {
+            std.log.info("minibuffer onKey error: {}", .{err});
+        };
+        return;
+    }
+
+    var key_registered = false;
+
+    if (g_editor.global_keymap.isAtRoot()) {
+        key_registered = panel.onKey(key, mods) catch |err| blk: {
+            std.log.info("panel onKey error: {}", .{err});
             break :blk true;
-        }
-    else
-        false;
+        };
+    }
 
     if (!key_registered) {
         _ = g_editor.global_keymap.onKey(key, mods, panel) catch |err| {
-            std.log.info("onKey error: {}", .{err});
+            std.log.info("global onKey error: {}", .{err});
         };
     }
 }
@@ -143,13 +141,21 @@ fn onKey(key: renderer.Key, mods: u32) void {
 fn onChar(codepoint: u32) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
 
-    const key_registered = if (g_editor.global_keymap.isAtRoot())
-        panel.onChar(codepoint) catch |err| blk: {
+    if (g_editor.minibuffer.active) {
+        _ = g_editor.minibuffer.onChar(panel, codepoint) catch |err| {
+            std.log.info("minibuffer onChar error: {}", .{err});
+        };
+        return;
+    }
+
+    var key_registered = false;
+
+    if (g_editor.global_keymap.isAtRoot()) {
+        key_registered = panel.onChar(codepoint) catch |err| blk: {
             std.log.info("onChar error: {}", .{err});
             break :blk true;
-        }
-    else
-        false;
+        };
+    }
 
     if (!key_registered) {
         _ = g_editor.global_keymap.onChar(codepoint, panel) catch |err| {
@@ -215,8 +221,6 @@ fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
     }
 }
 
-pub fn getScratchBuffer() !*Buffer {}
-
 pub fn init(allocator: *Allocator) !void {
     try renderer.init(allocator, .{
         .on_key_callback = onKey,
@@ -243,6 +247,8 @@ pub fn init(allocator: *Allocator) !void {
 
         .global_keymap = try KeyMap.init(allocator),
         .global_commands = CommandRegistry.init(allocator),
+
+        .minibuffer = try MiniBuffer.init(allocator),
     };
 
     try setFace("foreground", .{ 0xff, 0xff, 0xff });
@@ -296,7 +302,7 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind(":", struct {
         fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
-            try MiniBuffer.activate(panel, ":", .{
+            try g_editor.minibuffer.activate(":", .{
                 .on_confirm = commandHandler,
             });
         }
@@ -320,6 +326,7 @@ pub fn deinit() void {
         }
     }
 
+    g_editor.minibuffer.deinit();
     g_editor.global_keymap.deinit();
     g_editor.global_commands.deinit();
     g_editor.panels.deinit();
@@ -336,6 +343,10 @@ pub fn deinit() void {
 
 pub fn getOptions() *EditorOptions {
     return &g_editor.options;
+}
+
+pub fn getMiniBuffer() *MiniBuffer {
+    return g_editor.minibuffer;
 }
 
 pub fn setFace(name: []const u8, color: renderer.Color) !void {
@@ -409,15 +420,38 @@ pub fn draw() !void {
     var px: i32 = 0;
     var py: i32 = 0;
 
+    const char_height = g_editor.options.main_font.getCharHeight(g_editor.options.main_font_size);
+
+    const minibuffer_padding = @intCast(i32, g_editor.options.minibuffer_line_padding);
+    const minibuffer_height: i32 = (minibuffer_padding * 2) + char_height;
+
     for (g_editor.panels.items) |panel, i| {
         if (i == g_editor.panels.items.len - 1) {
             pw = (window_width - px);
         }
 
-        const char_height = g_editor.options.main_font.getCharHeight(g_editor.options.main_font_size);
         const status_padding: i32 = @intCast(i32, g_editor.options.status_line_padding);
         const status_line_height: i32 = (status_padding * 2) + char_height;
 
+        const panel_height = ph - status_line_height - minibuffer_height;
+
+        // Draw panel
+        {
+            const inner_rect = renderer.Rect{
+                .x = px,
+                .y = py,
+                .w = pw,
+                .h = panel_height,
+            };
+            try renderer.setScissor(inner_rect);
+            renderer.setColor(getFace("background").color);
+            try renderer.drawRect(inner_rect);
+            panel.vt.draw(panel, inner_rect) catch |err| {
+                std.log.warn("Panel draw error: {}", .{err});
+            };
+        }
+
+        // Draw status line
         {
             var line_background = getFace("status_line_background").color;
             var line_foreground = getFace("status_line_foreground").color;
@@ -428,7 +462,7 @@ pub fn draw() !void {
 
             const inner_rect = renderer.Rect{
                 .x = px,
-                .y = py,
+                .y = py + panel_height,
                 .w = pw,
                 .h = status_line_height,
             };
@@ -447,40 +481,21 @@ pub fn draw() !void {
                 status_line_text,
                 g_editor.options.main_font,
                 g_editor.options.main_font_size,
-                px + status_padding,
-                py + status_padding,
+                inner_rect.x + status_padding,
+                inner_rect.y + status_padding,
                 .{},
             );
         }
 
-        {
-            const inner_rect = renderer.Rect{
-                .x = px,
-                .y = py + status_line_height,
-                .w = pw,
-                .h = ph - status_line_height,
-            };
-            try renderer.setScissor(inner_rect);
-            renderer.setColor(getFace("background").color);
-            try renderer.drawRect(inner_rect);
-            panel.vt.draw(panel, inner_rect) catch |err| {
-                std.log.warn("Panel draw error: {}", .{err});
-            };
-            if (panel.minibuffer_active) {
-                panel.minibuffer.draw(inner_rect) catch |err| {
-                    std.log.warn("Minibuffer draw error: {}", .{err});
-                };
-            }
-        }
-
         px += pw;
 
+        // Draw border
         if (i != g_editor.panels.items.len - 1) {
             const border_rect = renderer.Rect{
                 .x = px,
                 .y = py,
                 .w = border_size,
-                .h = ph,
+                .h = panel_height + status_line_height,
             };
             try renderer.setScissor(border_rect);
             renderer.setColor(border_color);
@@ -488,6 +503,19 @@ pub fn draw() !void {
 
             px += border_size;
         }
+    }
+
+    // Draw minibuffer
+    {
+        const minibuffer_rect = renderer.Rect{
+            .x = 0,
+            .y = window_height - minibuffer_height,
+            .w = window_width,
+            .h = minibuffer_height,
+        };
+        g_editor.minibuffer.draw(minibuffer_rect) catch |err| {
+            std.log.warn("Minibuffer draw error: {}", .{err});
+        };
     }
 }
 

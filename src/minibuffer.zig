@@ -11,6 +11,7 @@ pub const MiniBuffer = struct {
     prompt: ?[]const u8 = null,
     callbacks: Callbacks = .{},
     cursor: usize = 0,
+    active: bool = false,
 
     pub const Callback = fn (panel: *editor.Panel, text: []const u8) anyerror!void;
     pub const Callbacks = struct {
@@ -105,6 +106,11 @@ pub const MiniBuffer = struct {
     }
 
     pub fn draw(self: *MiniBuffer, rect: renderer.Rect) !void {
+        try renderer.setScissor(rect);
+
+        // Only proceed to draw text if minibuffer is active
+        if (!self.active) return;
+
         const options = editor.getOptions();
         const font = options.main_font;
         const font_size = options.main_font_size;
@@ -112,35 +118,7 @@ pub const MiniBuffer = struct {
 
         const cursor_width = @divTrunc(try font.getCharAdvance(font_size, ' '), 5);
 
-        const outer_height = char_height +
-            @intCast(i32, options.minibuffer_line_padding) * 2 +
-            @intCast(i32, options.border_size);
-        const outer_rect = renderer.Rect{
-            .x = rect.x,
-            .y = rect.y + rect.h - outer_height,
-            .h = outer_height,
-            .w = rect.w,
-        };
-
-        const inner_rect = renderer.Rect{
-            .x = outer_rect.x,
-            .y = outer_rect.y + @intCast(i32, options.border_size),
-            .w = outer_rect.w,
-            .h = outer_rect.h - @intCast(i32, options.border_size),
-        };
-
-        try renderer.setScissor(outer_rect);
-
-        renderer.setColor(editor.getFace("border").color);
-        try renderer.drawRect(renderer.Rect{
-            .x = outer_rect.x,
-            .y = outer_rect.y,
-            .w = outer_rect.w,
-            .h = @intCast(i32, options.border_size),
-        });
-
-        renderer.setColor(editor.getFace("background").color);
-        try renderer.drawRect(inner_rect);
+        const padding = @intCast(i32, options.minibuffer_line_padding);
 
         var cursor_advance: i32 = 0;
 
@@ -156,39 +134,40 @@ pub const MiniBuffer = struct {
 
         renderer.setColor(editor.getFace("foreground").color);
 
+        // Draw prompt
         const prompt_advance = if (self.prompt) |prompt| blk: {
             break :blk try renderer.drawText(
                 prompt,
                 font,
                 font_size,
-                inner_rect.x + @intCast(i32, options.minibuffer_line_padding),
-                inner_rect.y + @intCast(i32, options.minibuffer_line_padding),
+                rect.x + padding,
+                rect.y + padding,
                 .{},
             );
         } else blk: {
             break :blk 0;
         };
 
+        // Draw text
         _ = try renderer.drawText(
             self.text.items,
             font,
             font_size,
-            prompt_advance + inner_rect.x + @intCast(i32, options.minibuffer_line_padding),
-            inner_rect.y + @intCast(i32, options.minibuffer_line_padding),
+            prompt_advance + rect.x + padding,
+            rect.y + padding,
             .{},
         );
 
+        // Draw cursor
         try renderer.drawRect(.{
             .w = cursor_width,
             .h = char_height,
-            .x = prompt_advance + inner_rect.x + @intCast(i32, options.minibuffer_line_padding) + cursor_advance,
-            .y = inner_rect.y + @intCast(i32, options.minibuffer_line_padding),
+            .x = prompt_advance + rect.x + padding + cursor_advance,
+            .y = rect.y + padding,
         });
     }
 
-    pub fn activate(panel: *editor.Panel, prompt: []const u8, callbacks: Callbacks) !void {
-        const self = panel.minibuffer;
-
+    pub fn activate(self: *MiniBuffer, prompt: []const u8, callbacks: Callbacks) !void {
         if (self.prompt) |existing_prompt| {
             self.allocator.free(existing_prompt);
         }
@@ -197,18 +176,15 @@ pub const MiniBuffer = struct {
         self.callbacks = callbacks;
 
         self.resetContent();
-        panel.minibuffer_active = true;
+        self.active = true;
     }
 
-    pub fn deactivate(panel: *editor.Panel) void {
-        const self = panel.minibuffer;
-
-        panel.minibuffer_active = false;
+    pub fn deactivate(self: *MiniBuffer) void {
+        self.active = false;
         self.resetContent();
     }
 
-    pub fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!bool {
-        const self = panel.minibuffer;
+    pub fn onChar(self: *MiniBuffer, panel: *editor.Panel, codepoint: u32) anyerror!bool {
         var text = [4]u8{ 0, 0, 0, 0 };
         var text_bytes = try std.unicode.utf8Encode(@intCast(u21, codepoint), &text);
         try self.insert(text[0..text_bytes], self.cursor);
@@ -221,9 +197,7 @@ pub const MiniBuffer = struct {
         return true;
     }
 
-    pub fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!bool {
-        const self = panel.minibuffer;
-
+    pub fn onKey(self: *MiniBuffer, panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!bool {
         const allocator = self.allocator;
         const content = try allocator.dupe(u8, self.text.items);
         defer allocator.free(content);
@@ -231,23 +205,23 @@ pub const MiniBuffer = struct {
         return switch (key) {
             .@"<esc>" => blk: {
                 self.resetContent();
-                panel.minibuffer_active = false;
+                self.active = false;
 
                 if (self.callbacks.on_cancel) |on_cancel| {
                     try on_cancel(panel, content);
                 }
                 break :blk true;
             },
-            .@"<enter>" => blk:{
+            .@"<enter>" => blk: {
                 self.resetContent();
-                panel.minibuffer_active = false;
+                self.active = false;
 
                 if (self.callbacks.on_confirm) |on_confirm| {
                     try on_confirm(panel, content);
                 }
                 break :blk true;
             },
-            .@"<backspace>" => blk:{
+            .@"<backspace>" => blk: {
                 if (self.cursor > 0) {
                     self.cursor -= 1;
                     try self.delete(self.cursor, 1);
@@ -258,7 +232,7 @@ pub const MiniBuffer = struct {
                 }
                 break :blk true;
             },
-            .@"<delete>" => blk:{
+            .@"<delete>" => blk: {
                 const text_length = try std.unicode.utf8CountCodepoints(self.text.items);
                 if (self.cursor < text_length) {
                     try self.delete(self.cursor, 1);
@@ -269,7 +243,7 @@ pub const MiniBuffer = struct {
                 }
                 break :blk true;
             },
-            .@"<left>" => blk:{
+            .@"<left>" => blk: {
                 if (self.cursor > 0) self.cursor -= 1;
                 break :blk true;
             },

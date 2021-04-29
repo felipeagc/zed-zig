@@ -1646,13 +1646,15 @@ pub const BufferPanel = struct {
     }
 
     fn normalModeForwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
-        try MiniBuffer.activate(panel, "/", .{
+        var minibuffer = editor.getMiniBuffer();
+        try minibuffer.activate("/", .{
             .on_confirm = bufferForwardSearchConfirm,
         });
     }
 
     fn normalModeBackwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
-        try MiniBuffer.activate(panel, "?", .{
+        var minibuffer = editor.getMiniBuffer();
+        try minibuffer.activate("?", .{
             .on_confirm = bufferBackwardSearchConfirm,
         });
     }
