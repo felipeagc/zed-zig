@@ -5,24 +5,28 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 pub const Binding = union(enum) {
-    submap: void,
+    submap: std.StringArrayHashMap(*Binding),
     command: editor.Command,
 };
 
 pub const KeyMap = struct {
     allocator: *Allocator,
-    map: std.StringArrayHashMap(Binding),
+    map: std.StringArrayHashMap(*Binding),
 
     pub fn init(allocator: *Allocator) !KeyMap {
         return KeyMap{
             .allocator = allocator,
-            .map = std.StringArrayHashMap(Binding).init(allocator),
+            .map = std.StringArrayHashMap(*Binding).init(allocator),
         };
     }
 
     pub fn deinit(self: *@This()) void {
         var iter = self.map.iterator();
         while (iter.next()) |entry| {
+            if (entry.value.* == .submap) {
+                entry.value.submap.deinit();
+            }
+            self.allocator.destroy(entry.value);
             self.allocator.free(entry.key);
         }
         self.map.deinit();
@@ -32,7 +36,7 @@ pub const KeyMap = struct {
         if (sequence.len == 0) return .none;
 
         if (self.map.get(sequence)) |binding| {
-            switch (binding) {
+            switch (binding.*) {
                 .submap => return .submap,
                 .command => |command| {
                     try command(panel, &[_][]const u8{});
@@ -55,7 +59,7 @@ pub const KeyMap = struct {
             defer self.allocator.free(wildcard_seq);
 
             if (self.map.get(wildcard_seq)) |binding| {
-                switch (binding) {
+                switch (binding.*) {
                     .submap => return .submap,
                     .command => |command| {
                         try command(panel, &[1][]const u8{sequence[i + 1 ..]});
@@ -74,22 +78,49 @@ pub const KeyMap = struct {
 
         var split_iter = std.mem.tokenize(sequence, " ");
         while (split_iter.next()) |part| {
+            const prev_seq_len = seq_builder.items.len;
+
             if (seq_builder.items.len > 0) try seq_builder.append(' ');
             try seq_builder.appendSlice(part);
 
             const semi_seq = try self.allocator.dupe(u8, seq_builder.items);
-
             const is_action = split_iter.rest().len == 0;
+            const existing_binding = self.map.get(semi_seq);
 
-            const binding_existed = self.map.get(semi_seq) != null;
+            var binding_to_add = if (existing_binding == null)
+                try self.allocator.create(Binding)
+            else
+                existing_binding.?;
 
             if (is_action) {
-                try self.map.put(semi_seq, Binding{ .command = command });
+                if (existing_binding != null and existing_binding.?.* == .submap) {
+                    existing_binding.?.submap.deinit();
+                }
+                binding_to_add.* = Binding{ .command = command };
             } else {
-                try self.map.put(semi_seq, Binding{ .submap = .{} });
+                if (existing_binding == null or existing_binding.?.* != .submap) {
+                    var submap_map = std.StringArrayHashMap(*Binding).init(self.allocator);
+                    binding_to_add.* = Binding{ .submap = submap_map };
+                }
             }
 
-            if (binding_existed) {
+            if (existing_binding == null and prev_seq_len > 0) {
+                const prev_seq = seq_builder.items[0..prev_seq_len];
+                if (self.map.get(prev_seq)) |binding| {
+                    if (binding.* == .submap) {
+                        const part_name = semi_seq[semi_seq.len - part.len ..];
+                        try binding.submap.put(part_name, binding_to_add);
+                    } else {
+                        return error.PrevSeqIsNotSubmap;
+                    }
+                } else {
+                    return error.PrevSeqIsNotRegistered;
+                }
+            }
+
+            try self.map.put(semi_seq, binding_to_add);
+
+            if (existing_binding != null) {
                 self.allocator.free(semi_seq);
             }
         }
@@ -174,5 +205,23 @@ pub const KeyMap = struct {
         };
 
         return try allocator.dupe(u8, key_name);
+    }
+
+    pub fn print(self: *@This()) void {
+        var iter = self.map.iterator();
+        while (iter.next()) |entry| {
+            std.debug.print("\"{s}\":\n", .{entry.key});
+            switch (entry.value.*) {
+                .submap => |submap| {
+                    var subiter = submap.iterator();
+                    while (subiter.next()) |subentry| {
+                        std.debug.print("    \"{s}\"\n", .{subentry.key});
+                    }
+                },
+                .command => {
+                    std.debug.print("    <command>\n", .{});
+                },
+            }
+        }
     }
 };
