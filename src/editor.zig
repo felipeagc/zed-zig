@@ -5,6 +5,7 @@ const KeyMap = @import("keymap.zig").KeyMap;
 const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
 const Buffer = @import("buffer.zig").Buffer;
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
+const ColorScheme = @import("highlighter.zig").ColorScheme;
 const regex = @import("regex.zig");
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
@@ -47,6 +48,7 @@ const Editor = struct {
     minibuffer: *MiniBuffer,
 
     key_buffer: std.ArrayList(u8),
+    color_scheme: ColorScheme,
 };
 
 pub const PanelVT = struct {
@@ -316,6 +318,8 @@ pub fn init(allocator: *Allocator) !void {
         .minibuffer = try MiniBuffer.init(allocator),
 
         .key_buffer = std.ArrayList(u8).init(allocator),
+
+        .color_scheme = try ColorScheme.defaultDark(allocator),
     };
 
     try setFace("foreground", .{ 0xff, 0xff, 0xff });
@@ -393,6 +397,7 @@ pub fn deinit() void {
         }
     }
 
+    g_editor.color_scheme.deinit();
     g_editor.key_buffer.deinit();
     g_editor.minibuffer.deinit();
     g_editor.global_keymap.deinit();
