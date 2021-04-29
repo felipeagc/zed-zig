@@ -1684,7 +1684,7 @@ pub const BufferPanel = struct {
     fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) !usize {
         const filetype = self.buffer.filetype;
         const increase_indent_regex = &filetype.increase_indent_regex;
-        const decrease_indent_regex = &filetype.increase_indent_regex;
+        const decrease_indent_regex = &filetype.decrease_indent_regex;
 
         var i: isize = @intCast(isize, line_index) - 1;
         while (i >= 0) : (i -= 1) {
