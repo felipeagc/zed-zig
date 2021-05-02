@@ -127,13 +127,13 @@ fn onKey(key: renderer.Key, mods: u32) void {
 
     if (g_editor.minibuffer.active) {
         _ = g_editor.minibuffer.onKey(panel, key, mods) catch |err| {
-            std.log.info("minibuffer onKey error: {}", .{err});
+            std.log.err("minibuffer onKey error: {}", .{err});
         };
         return;
     }
 
     const maybe_seq: ?[]const u8 = KeyMap.keyToKeySeq(g_editor.allocator, key, mods) catch |err| {
-        std.log.info("sequence onKey error: {}", .{err});
+        std.log.err("sequence onKey error: {}", .{err});
         return;
     };
     defer if (maybe_seq) |seq| {
@@ -147,7 +147,7 @@ fn onKey(key: renderer.Key, mods: u32) void {
         var result = KeyResult.none;
 
         result = panel.onKey(key, mods) catch |err| blk: {
-            std.log.info("panel onKey error: {}", .{err});
+            std.log.err("panel onKey error: {}", .{err});
             break :blk .none;
         };
 
@@ -156,7 +156,7 @@ fn onKey(key: renderer.Key, mods: u32) void {
                 panel,
                 g_editor.key_buffer.items,
             ) catch |err| blk: {
-                std.log.info("global onKey error: {}", .{err});
+                std.log.err("global onKey error: {}", .{err});
                 break :blk .none;
             };
 
@@ -174,13 +174,13 @@ fn onChar(codepoint: u32) void {
 
     if (g_editor.minibuffer.active) {
         _ = g_editor.minibuffer.onChar(panel, codepoint) catch |err| {
-            std.log.info("minibuffer onChar error: {}", .{err});
+            std.log.err("minibuffer onChar error: {}", .{err});
         };
         return;
     }
 
     const maybe_seq: ?[]const u8 = KeyMap.codepointToKeySeq(g_editor.allocator, codepoint) catch |err| {
-        std.log.info("sequence onChar error: {}", .{err});
+        std.log.err("sequence onChar error: {}", .{err});
         return;
     };
     defer if (maybe_seq) |seq| {
@@ -194,7 +194,7 @@ fn onChar(codepoint: u32) void {
         var result = KeyResult.none;
 
         result = panel.onChar(codepoint) catch |err| blk: {
-            std.log.info("panel onChar error: {}", .{err});
+            std.log.err("panel onChar error: {}", .{err});
             break :blk .none;
         };
 
@@ -203,7 +203,7 @@ fn onChar(codepoint: u32) void {
                 panel,
                 g_editor.key_buffer.items,
             ) catch |err| blk: {
-                std.log.info("global onChar error: {}", .{err});
+                std.log.err("global onChar error: {}", .{err});
                 break :blk .none;
             };
 
@@ -228,7 +228,7 @@ fn onScroll(dx: f64, dy: f64) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
     if (panel.vt.on_scroll) |panel_on_scroll| {
         panel_on_scroll(panel, dx, dy) catch |err| {
-            std.log.info("onScroll error: {}", .{err});
+            std.log.err("onScroll error: {}", .{err});
         };
     }
 }
@@ -249,12 +249,12 @@ fn commandHandler(panel: *Panel, command_string: []const u8) anyerror!void {
 
     if (g_editor.global_commands.get(command_name)) |command| {
         command(panel, args) catch |err| {
-            std.log.warn("error executing command: {}", .{err});
+            std.log.err("error executing command: {}", .{err});
         };
     } else if (panel.vt.command_registry) |panel_command_registry| {
         if (panel_command_registry.get(command_name)) |command| {
             command(panel, args) catch |err| {
-                std.log.warn("error executing command: {}", .{err});
+                std.log.err("error executing command: {}", .{err});
             };
         }
     }
@@ -471,7 +471,7 @@ pub fn draw() !void {
             renderer.setColor(color_scheme.getFace(.default).background);
             try renderer.drawRect(inner_rect);
             panel.vt.draw(panel, inner_rect) catch |err| {
-                std.log.warn("Panel draw error: {}", .{err});
+                std.log.err("Panel draw error: {}", .{err});
             };
         }
 
@@ -538,7 +538,7 @@ pub fn draw() !void {
             .h = minibuffer_height,
         };
         g_editor.minibuffer.draw(minibuffer_rect) catch |err| {
-            std.log.warn("Minibuffer draw error: {}", .{err});
+            std.log.err("Minibuffer draw error: {}", .{err});
         };
     }
 }
@@ -564,7 +564,7 @@ pub fn mainLoop() void {
         }
 
         draw() catch |err| {
-            std.log.warn("draw error: {}", .{err});
+            std.log.err("draw error: {}", .{err});
         };
     }
 }

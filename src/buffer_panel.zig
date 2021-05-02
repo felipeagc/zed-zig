@@ -189,13 +189,13 @@ pub const BufferPanel = struct {
 
     fn beginCheckpoint(self: *BufferPanel) void {
         self.buffer.beginCheckpoint(self.cursor.line, self.cursor.column) catch |err| {
-            std.log.warn("could not insert begin checkpoint: {}", .{err});
+            std.log.err("could not insert begin checkpoint: {}", .{err});
         };
     }
 
     fn endCheckpoint(self: *BufferPanel) void {
         self.buffer.endCheckpoint(self.cursor.line, self.cursor.column) catch |err| {
-            std.log.warn("could not insert end checkpoint: {}", .{err});
+            std.log.err("could not insert end checkpoint: {}", .{err});
         };
     }
 
@@ -1803,7 +1803,6 @@ pub const BufferPanel = struct {
                 decrease_indent_regex.setBuffer(line_content);
                 if (decrease_indent_regex.nextMatch(null, null) != null) {
                     level -= 1;
-                    // std.log.info("decrease: \"{s}\"", .{line_content});
                 }
             }
 
@@ -1844,7 +1843,6 @@ pub const BufferPanel = struct {
                 increase_indent_regex.setBuffer(line_content);
                 if (increase_indent_regex.nextMatch(null, null) != null) {
                     level += 1;
-                    // std.log.info("increase: \"{s}\"", .{line_content});
                 }
             }
         }
@@ -2011,7 +2009,7 @@ pub const BufferPanel = struct {
         _ = try proc.wait();
 
         if (error_content.len > 0) {
-            std.log.err("formatter: {s}", .{error_content});
+            std.log.err("formatter error: {s}", .{error_content});
         }
 
         if (formatted_content.len > 0) {
@@ -2029,7 +2027,7 @@ pub const BufferPanel = struct {
         if (args.len != 0) return error.InvalidCommandParameters;
 
         self.buffer.save() catch |err| {
-            std.log.info("Failed to save buffer: \"{s}\"", .{self.buffer.name});
+            std.log.err("Failed to save buffer: \"{s}\"", .{self.buffer.name});
             return err;
         };
     }
@@ -2045,7 +2043,7 @@ pub const BufferPanel = struct {
             self.buffer = new_buffer;
             self.resetView();
         } else |err| {
-            std.log.info("Failed to open buffer: {s}", .{path});
+            std.log.err("Failed to open buffer: {s}", .{path});
         }
     }
 
