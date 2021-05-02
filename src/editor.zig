@@ -25,16 +25,9 @@ pub const KeyResult = enum {
     command,
 };
 
-const Face = struct {
-    color: renderer.Color,
-};
-
 const Editor = struct {
     allocator: *Allocator,
     options: EditorOptions,
-
-    faces: std.ArrayList(Face),
-    face_map: std.StringHashMap(usize),
 
     panel_vts: std.ArrayList(*const PanelVT),
     panel_vt_map: std.StringHashMap(usize),
@@ -304,8 +297,6 @@ pub fn init(allocator: *Allocator) !void {
         .options = .{
             .main_font = try renderer.Font.init("Cascadia Code", "regular"),
         },
-        .faces = std.ArrayList(Face).init(allocator),
-        .face_map = std.StringHashMap(usize).init(allocator),
 
         .panel_vts = std.ArrayList(*const PanelVT).init(allocator),
         .panel_vt_map = std.StringHashMap(usize).init(allocator),
@@ -321,17 +312,6 @@ pub fn init(allocator: *Allocator) !void {
 
         .color_scheme = try ColorScheme.defaultDark(allocator),
     };
-
-    try setFace("foreground", .{ 0xff, 0xff, 0xff });
-    try setFace("background", .{ 0x0c, 0x15, 0x1b });
-
-    try setFace("border", .{ 0x30, 0x30, 0x30 });
-
-    try setFace("status_line_background", .{ 0x30, 0x30, 0x30 });
-    try setFace("status_line_foreground", .{ 0xd4, 0xf0, 0xff });
-
-    try setFace("status_line_focused_background", .{ 0x87, 0xd7, 0xff });
-    try setFace("status_line_focused_foreground", .{ 0x0c, 0x15, 0x1b });
 
     try registerPanelVT(&@import("buffer_panel.zig").VT);
 
@@ -397,15 +377,12 @@ pub fn deinit() void {
         }
     }
 
-    g_editor.color_scheme.deinit();
     g_editor.key_buffer.deinit();
     g_editor.minibuffer.deinit();
     g_editor.global_keymap.deinit();
     g_editor.global_commands.deinit();
     g_editor.panels.deinit();
     g_editor.options.main_font.deinit();
-    g_editor.face_map.deinit();
-    g_editor.faces.deinit();
     g_editor.panel_vt_map.deinit();
     g_editor.panel_vts.deinit();
 
@@ -422,36 +399,8 @@ pub fn getMiniBuffer() *MiniBuffer {
     return g_editor.minibuffer;
 }
 
-pub fn setFace(name: []const u8, color: renderer.Color) !void {
-    const face_index = if (g_editor.face_map.get(name)) |face_index| blk: {
-        break :blk face_index;
-    } else blk: {
-        const face_index = g_editor.faces.items.len;
-        try g_editor.faces.append(Face{ .color = color });
-        try g_editor.face_map.put(name, face_index);
-        break :blk face_index;
-    };
-
-    g_editor.faces.items[face_index] = Face{
-        .color = color,
-    };
-}
-
-pub fn getFace(name: []const u8) Face {
-    const face_index = getFaceIndex(name);
-    return g_editor.faces.items[face_index];
-}
-
-pub fn getFaceFromIndex(face_index: usize) Face {
-    return g_editor.faces.items[face_index];
-}
-
-pub fn getFaceIndex(name: []const u8) usize {
-    if (g_editor.face_map.get(name)) |face_index| {
-        return face_index;
-    }
-
-    return 0;
+pub fn getColorScheme() *ColorScheme {
+    return &g_editor.color_scheme;
 }
 
 pub fn addPanel(panel: *Panel) !void {
@@ -480,7 +429,9 @@ pub fn draw() !void {
     var window_height: i32 = undefined;
     try renderer.getWindowSize(&window_width, &window_height);
 
-    const border_color = getFace("border").color;
+    const color_scheme = getColorScheme();
+
+    const border_color = color_scheme.getFace(.border).background;
     const border_size = @intCast(i32, g_editor.options.border_size);
     const border_count = @intCast(i32, g_editor.panels.items.len - 1);
 
@@ -517,7 +468,7 @@ pub fn draw() !void {
                 .h = panel_height,
             };
             try renderer.setScissor(inner_rect);
-            renderer.setColor(getFace("background").color);
+            renderer.setColor(color_scheme.getFace(.default).background);
             try renderer.drawRect(inner_rect);
             panel.vt.draw(panel, inner_rect) catch |err| {
                 std.log.warn("Panel draw error: {}", .{err});
@@ -526,11 +477,11 @@ pub fn draw() !void {
 
         // Draw status line
         {
-            var line_background = getFace("status_line_background").color;
-            var line_foreground = getFace("status_line_foreground").color;
+            var line_background = color_scheme.getFace(.status_line).background;
+            var line_foreground = color_scheme.getFace(.status_line).foreground;
             if (i == g_editor.selected_panel) {
-                line_background = getFace("status_line_focused_background").color;
-                line_foreground = getFace("status_line_focused_foreground").color;
+                line_background = color_scheme.getFace(.status_line_focused).background;
+                line_foreground = color_scheme.getFace(.status_line_focused).foreground;
             }
 
             const inner_rect = renderer.Rect{

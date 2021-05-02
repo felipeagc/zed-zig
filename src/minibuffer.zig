@@ -111,6 +111,7 @@ pub const MiniBuffer = struct {
         // Only proceed to draw text if minibuffer is active
         if (!self.active) return;
 
+        const color_scheme = editor.getColorScheme();
         const options = editor.getOptions();
         const font = options.main_font;
         const font_size = options.main_font_size;
@@ -132,7 +133,7 @@ pub const MiniBuffer = struct {
             codepoint_index += 1;
         }
 
-        renderer.setColor(editor.getFace("foreground").color);
+        renderer.setColor(color_scheme.getFace(.default).foreground);
 
         // Draw prompt
         const prompt_advance = if (self.prompt) |prompt| blk: {

@@ -229,6 +229,8 @@ pub const BufferPanel = struct {
         defer self.scroll_y.update(1.0 / 60.0);
         defer self.scroll_x.update(1.0 / 60.0);
 
+        const color_scheme = editor.getColorScheme();
+
         const cursor = try self.getFixedCursorPos();
         const options = editor.getOptions();
         const font = options.main_font;
@@ -273,7 +275,7 @@ pub const BufferPanel = struct {
 
         // Draw visual mode selection background
         if (self.mode == .visual) {
-            renderer.setColor(editor.getFace("border").color);
+            renderer.setColor(color_scheme.getFace(.border).background);
 
             var start_pos = Position{};
             var end_pos = Position{};
@@ -323,7 +325,7 @@ pub const BufferPanel = struct {
 
         // Draw visual line mode selection background
         if (self.mode == .visual_line) {
-            renderer.setColor(editor.getFace("border").color);
+            renderer.setColor(color_scheme.getFace(.border).background);
 
             var start_pos = Position{};
             var end_pos = Position{};
@@ -357,7 +359,7 @@ pub const BufferPanel = struct {
         }
 
         // Draw text
-        renderer.setColor(editor.getFace("foreground").color);
+        renderer.setColor(color_scheme.getFace(.default).foreground);
         var current_line_index = first_line;
         while (current_line_index <= last_line) : (current_line_index += 1) {
             const line = self.buffer.lines.items[current_line_index];
@@ -408,7 +410,7 @@ pub const BufferPanel = struct {
                 i += 1;
             }
 
-            renderer.setColor(editor.getFace("foreground").color);
+            renderer.setColor(color_scheme.getFace(.default).foreground);
             try renderer.drawRect(.{
                 .w = cursor_width,
                 .h = char_height,
@@ -420,7 +422,7 @@ pub const BufferPanel = struct {
                 switch (cursor_codepoint) {
                     '\t', '\n', '\r' => {},
                     else => {
-                        renderer.setColor(editor.getFace("background").color);
+                        renderer.setColor(color_scheme.getFace(.default).background);
 
                         _ = try renderer.drawCodepoint(
                             cursor_codepoint,

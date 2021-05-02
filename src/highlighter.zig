@@ -5,44 +5,34 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const Color = renderer.Color;
 
-pub const HighlightGroup = struct {
-    face_name: []const u8,
+pub const FaceDesc = struct {
     foreground: ?[]const u8 = null,
     background: ?[]const u8 = null,
 };
 
+pub const Face = struct {
+    foreground: Color = .{ 0xff, 0xff, 0xff },
+    background: Color = .{ 0x0c, 0x15, 0x1b },
+};
+
+pub const FaceType = enum { default, border, status_line, status_line_focused, max };
+
+pub const FaceCollection = [@enumToInt(FaceType.max)]Face;
+
 pub const ColorScheme = struct {
-    groups: std.ArrayList(Group), // Indexed by face index
+    faces: FaceCollection,
 
-    const Group = struct {
-        foreground: ?Color = null,
-        background: ?Color = null,
-    };
-
-    pub fn init(allocator: *Allocator, highlight_groups: []const HighlightGroup) !ColorScheme {
-        var groups = std.ArrayList(Group).init(allocator);
-
-        for (highlight_groups) |group| {
-            const face_index = editor.getFaceIndex(group.face_name);
-            try groups.resize(std.math.max(groups.items.len, face_index + 1));
-
-            var new_group = Group{};
-            if (group.foreground) |color_str| {
-                new_group.foreground = try colorFromStr(color_str);
+    pub fn init(face_descs: [@enumToInt(FaceType.max)]FaceDesc) !ColorScheme {
+        var faces = [1]Face{.{}} ** @enumToInt(FaceType.max);
+        for (face_descs) |desc, i| {
+            if (desc.background) |background| {
+                faces[i].background = try colorFromStr(background);
             }
-            if (group.background) |color_str| {
-                new_group.background = try colorFromStr(color_str);
+            if (desc.foreground) |foreground| {
+                faces[i].foreground = try colorFromStr(foreground);
             }
-            groups.items[face_index] = new_group;
         }
-
-        return ColorScheme{
-            .groups = groups,
-        };
-    }
-
-    pub fn deinit(self: *ColorScheme) void {
-        self.groups.deinit();
+        return ColorScheme{ .faces = faces };
     }
 
     pub fn colorFromStr(str: []const u8) !Color {
@@ -57,14 +47,22 @@ pub const ColorScheme = struct {
     }
 
     pub fn defaultDark(allocator: *Allocator) !ColorScheme {
-        return try ColorScheme.init(
-            allocator,
-            &.{
-                .{ .face_name = "default", .foreground = "#0c151b" },
-                .{ .face_name = "foreground", .foreground = "#ffffff" },
-                .{ .face_name = "status_line_background", .foreground = "#303030" },
+        return comptime try ColorScheme.init(
+            [_]FaceDesc{
+                // default:
+                .{ .foreground = "#ffffff", .background = "#0c151b" },
+                // border:
+                .{ .foreground = "#303030", .background = "#303030" },
+                // status_line:
+                .{ .foreground = "#d4f0ff", .background = "#303030" },
+                // status_line_focused:
+                .{ .foreground = "#0c151b", .background = "#87d7ff" },
             },
         );
+    }
+
+    pub fn getFace(self: *const ColorScheme, kind: FaceType) Face {
+        return self.faces[@enumToInt(kind)];
     }
 };
 
