@@ -1685,8 +1685,10 @@ pub const BufferPanel = struct {
 
     fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) !usize {
         const filetype = self.buffer.filetype;
-        const increase_indent_regex = &filetype.increase_indent_regex;
-        const decrease_indent_regex = &filetype.decrease_indent_regex;
+        const increase_indent_regex =
+            &(filetype.increase_indent_regex orelse return error.MissingIncreaseIndentRegex);
+        const decrease_indent_regex =
+            &(filetype.decrease_indent_regex orelse return error.MissingDecreaseIndentRegex);
 
         var i: isize = @intCast(isize, line_index) - 1;
         while (i >= 0) : (i -= 1) {
@@ -1742,8 +1744,14 @@ pub const BufferPanel = struct {
     }
 
     fn autoIndentSingleLine(self: *BufferPanel, line_index: usize) !void {
-        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
-        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
+        if (self.buffer.filetype.increase_indent_regex == null or
+            self.buffer.filetype.decrease_indent_regex == null)
+        {
+            return;
+        }
+
+        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex.?;
+        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex.?;
         const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
         const maybe_indent_next_line_regex = &self.buffer.filetype.indent_next_line_regex;
 
@@ -1789,8 +1797,13 @@ pub const BufferPanel = struct {
     }
 
     fn autoIndentRegion(self: *BufferPanel, start_line: usize, end_line: usize) !void {
-        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex;
-        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex;
+        if (self.buffer.filetype.increase_indent_regex == null or
+            self.buffer.filetype.decrease_indent_regex == null) {
+            return;
+        }
+
+        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex.?;
+        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex.?;
         const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
         const maybe_indent_next_line_regex = &self.buffer.filetype.indent_next_line_regex;
 

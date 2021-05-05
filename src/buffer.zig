@@ -720,12 +720,17 @@ test "buffer" {
     const allocator = std.testing.allocator;
     const expect = std.testing.expect;
 
+    const filetype = try FileType.init(allocator, "plain", .{});
+    defer filetype.deinit();
+
     var buffer = try Buffer.initWithContent(allocator,
         \\hello world
         \\second line
         \\
         \\olá mundo -- em português
-    , .{});
+    , .{
+        .filetype = filetype,
+    });
     defer buffer.deinit();
 
     {
@@ -857,7 +862,9 @@ test "buffer" {
     }
 
     {
-        var new_buffer = try buffer.clone(.{});
+        var new_buffer = try buffer.clone(.{
+            .filetype = filetype,
+        });
         defer new_buffer.deinit();
     }
 }
@@ -866,11 +873,16 @@ test "buffer2" {
     const allocator = std.testing.allocator;
     const expect = std.testing.expect;
 
+    const filetype = try FileType.init(allocator, "plain", .{});
+    defer filetype.deinit();
+
     var buffer = try Buffer.initWithContent(allocator,
         \\
         \\a
         \\}
-    , .{});
+    , .{
+        .filetype = filetype,
+    });
     defer buffer.deinit();
 
     expect((try buffer.getCodepointDistance(0, 0, 1, 1)) == 2);

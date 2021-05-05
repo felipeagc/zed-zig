@@ -6,8 +6,8 @@ const Regex = @import("regex.zig").Regex;
 pub const FileType = struct {
     allocator: *Allocator,
     name: []const u8,
-    increase_indent_regex: Regex,
-    decrease_indent_regex: Regex,
+    increase_indent_regex: ?Regex = null,
+    decrease_indent_regex: ?Regex = null,
     indent_next_line_regex: ?Regex = null,
     zero_indent_regex: ?Regex = null,
     tab_width: usize,
@@ -21,8 +21,8 @@ pub const FileType = struct {
     };
 
     pub const Options = struct {
-        increase_indent_pattern: []const u8,
-        decrease_indent_pattern: []const u8,
+        increase_indent_pattern: ?[]const u8 = null,
+        decrease_indent_pattern: ?[]const u8 = null,
         indent_next_line_pattern: ?[]const u8 = null,
         zero_indent_pattern: ?[]const u8 = null,
         tab_width: u32 = 4,
@@ -35,11 +35,17 @@ pub const FileType = struct {
         var self = try allocator.create(FileType);
         errdefer allocator.destroy(self);
 
-        var increase_indent_regex = try Regex.init(allocator);
-        try increase_indent_regex.addPattern(0, options.increase_indent_pattern);
+        var increase_indent_regex: ?Regex = null;
+        if (options.increase_indent_pattern) |pattern| {
+            increase_indent_regex = try Regex.init(allocator);
+            try increase_indent_regex.?.addPattern(0, pattern);
+        }
 
-        var decrease_indent_regex = try Regex.init(allocator);
-        try decrease_indent_regex.addPattern(0, options.decrease_indent_pattern);
+        var decrease_indent_regex: ?Regex = null;
+        if (options.decrease_indent_pattern) |pattern| {
+            decrease_indent_regex = try Regex.init(allocator);
+            try decrease_indent_regex.?.addPattern(0, pattern);
+        }
 
         var indent_next_line_regex: ?Regex = null;
         if (options.indent_next_line_pattern) |pattern| {
@@ -84,8 +90,12 @@ pub const FileType = struct {
         if (self.formatter_command) |command| {
             self.allocator.free(command);
         }
-        self.increase_indent_regex.deinit();
-        self.decrease_indent_regex.deinit();
+        if (self.increase_indent_regex) |*regex| {
+            regex.deinit();
+        }
+        if (self.decrease_indent_regex) |*regex| {
+            regex.deinit();
+        }
         if (self.indent_next_line_regex) |*regex| {
             regex.deinit();
         }

@@ -37,6 +37,7 @@ pub fn build(b: *std.build.Builder) void {
     const tests = [_]*std.build.LibExeObjStep{
         b.addTest("src/buffer.zig"),
         b.addTest("src/minibuffer.zig"),
+        b.addTest("src/highlighter.zig"),
     };
     for (tests) |test_| {
         test_.linkLibC();
