@@ -1,6 +1,7 @@
 const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
+const Regex = @import("regex.zig").Regex;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const Color = renderer.Color;
@@ -15,7 +16,13 @@ pub const Face = struct {
     background: Color = .{ 0x0c, 0x15, 0x1b },
 };
 
-pub const FaceType = enum { default, border, status_line, status_line_focused, max };
+pub const FaceType = enum {
+    default,
+    border,
+    status_line,
+    status_line_focused,
+    max,
+};
 
 pub const FaceCollection = [@enumToInt(FaceType.max)]Face;
 
@@ -66,4 +73,189 @@ pub const ColorScheme = struct {
     }
 };
 
-pub const Highlighter = struct {};
+pub const TokenType = enum {
+    normal,
+    inside_delimeter,
+    delimeter_start,
+    delimeter_end,
+};
+
+pub const Token = struct {
+    kind: TokenType,
+    face_type: FaceType,
+    length: usize,
+};
+
+pub const Highlighter = struct {
+    allocator: *Allocator,
+    regex: Regex,
+    patterns: []InternalPattern,
+
+    pub const PatternType = enum {
+        normal,
+        push,
+        pop,
+    };
+
+    pub const Pattern = struct {
+        kind: PatternType,
+        face_type: FaceType,
+        pattern: []const u8,
+        sub_highlighter: *Highlighter,
+    };
+
+    const InternalPattern = struct {
+        kind: PatternType,
+        face_type: FaceType,
+        sub_highlighter: *Highlighter,
+    };
+
+    pub fn init(allocator: *Allocator, patterns: []const Pattern) !*Highlighter {
+        var self = try allocator.create(Highlighter);
+        errdefer allocator.destroy(self);
+
+        var regex = try Regex.init(allocator);
+        for (patterns) |pattern| {
+            try regex.addPattern(@enumToInt(pattern.face_type), pattern.pattern);
+        }
+
+        var internal_patterns = try allocator.alloc(InternalPattern, patterns.len);
+        for (patterns) |pattern, i| {
+            internal_patterns[i] = InternalPattern{
+                .kind = pattern.kind,
+                .face_type = pattern.face_type,
+                .sub_highlighter = pattern.sub_highlighter,
+            };
+        }
+
+        self.* = Highlighter{
+            .allocator = allocator,
+            .regex = regex,
+            .patterns = internal_patterns,
+        };
+        return self;
+    }
+
+    pub fn deinit(self: *Highlighter) void {
+        self.allocator.free(self.patterns);
+        self.regex.deinit();
+        self.allocator.destroy(self);
+    }
+};
+
+pub const HighlighterState = struct {
+    highlighter: *Highlighter,
+    stack: std.ArrayList(*HighlighterState),
+
+    pub fn init(highlighter: *Highlighter) !*HighlighterState {
+        const allocator = highlighter.allocator;
+
+        var self = try allocator.create(HighlighterState);
+
+        self.* = HighlighterState{
+            .highlighter = highlighter,
+            .stack = std.ArrayList(*HighlighterState).init(allocator),
+        };
+
+        try self.resetStack();
+
+        return self;
+    }
+
+    pub fn deinit(self: *HighlighterState) void {
+        const allocator = self.highlighter.allocator;
+        self.stack.deinit();
+        allocator.destroy(self);
+    }
+
+    pub fn resetStack(self: *HighlighterState) !void {
+        self.stack.shrinkRetainingCapacity(0);
+        try self.stack.append(self);
+    }
+
+    pub fn highlightLine(
+        self: *HighlighterState,
+        tokens: *std.ArrayList(Token),
+        text: []const u8,
+    ) !void {
+        var current_state = self.stack.items[self.stack.items.len - 1];
+        current_state.highlighter.regex.setBuffer(text);
+
+        tokens.shrinkRetainingCapacity(0);
+
+        var last_regex_end: isize = 0;
+        var last_end: isize = 0;
+
+        var match_start: usize = 0;
+        var match_end: usize = 0;
+        while (current_state.highlighter.regex.nextMatch(&match_start, &match_end)) |pattern_index| {
+            const pattern = &self.highlighter.patterns[pattern_index];
+            const face_type = pattern.face_type;
+
+            const in_between_length: isize = (last_regex_end + @intCast(isize, match_start)) - last_end;
+            const match_length: isize = @intCast(isize, match_end) - @intCast(isize, match_start);
+
+            last_end = last_regex_end + @intCast(isize, match_end);
+
+            const token_type: TokenType = switch (pattern.kind) {
+                .normal => .normal,
+                .push => .delimeter_start,
+                .pop => .delimeter_end,
+            };
+
+            if (in_between_length > 0) {
+                const token = Token{
+                    .kind = if (self.stack.items.len > 1) TokenType.inside_delimeter else TokenType.normal,
+                    .face_type = .default,
+                    .length = @intCast(usize, in_between_length),
+                };
+                try tokens.append(token);
+            }
+
+            if (match_length > 0) {
+                const token = Token{
+                    .kind = token_type,
+                    .face_type = face_type,
+                    .length = @intCast(usize, match_length),
+                };
+                try tokens.append(token);
+            }
+
+            switch (pattern.kind) {
+                .normal => {},
+                .push => {
+                    last_regex_end += @intCast(isize, match_end);
+
+                    const sub_highlighter: *Highlighter = pattern.sub_highlighter;
+                    var sub_state = try HighlighterState.init(sub_highlighter);
+                    try self.stack.append(sub_state);
+
+                    current_state = self.stack.items[self.stack.items.len - 1];
+
+                    current_state.highlighter.regex.setBuffer(text[@intCast(usize, last_regex_end)..]);
+                },
+                .pop => {
+                    last_regex_end += @intCast(isize, match_end);
+
+                    current_state.deinit();
+
+                    _ = self.stack.pop();
+                    std.debug.assert(self.stack.items.len > 0);
+                    current_state = self.stack.items[self.stack.items.len - 1];
+
+                    current_state.highlighter.regex.setBuffer(text[@intCast(usize, last_regex_end)..]);
+                },
+            }
+        }
+    }
+};
+
+comptime {
+    _ = Highlighter.init;
+    _ = Highlighter.deinit;
+
+    _ = HighlighterState.init;
+    _ = HighlighterState.deinit;
+    _ = HighlighterState.resetStack;
+    _ = HighlighterState.highlightLine;
+}
