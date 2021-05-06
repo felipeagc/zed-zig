@@ -1,0 +1,43 @@
+{
+	"increase_indent_pattern": "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
+	"decrease_indent_pattern": "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
+	"indent_next_line_pattern": "^.*\\)\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$",
+	"zero_indent_pattern": "^\\s*#",
+	"formatter_command": "clang-format",
+	"brackets": [
+		{ "open": "\"", "close": "\"" },
+		{ "open": "'", "close": "'" },
+		{ "open": "(", "close": ")" },
+		{ "open": "[", "close": "]" },
+		{ "open": "{", "close": "}" }
+	],
+	"highlighters": [
+		{
+			"name": "multiline_comment",
+			"default_face": "comment",
+			"patterns": [
+				{
+					"type": "pop",
+					"face": "comment",
+					"pattern": "\\*/"
+				}
+			]
+		},
+		{
+			"name": "root",
+			"default_face": "default",
+			"patterns": [
+				{
+					"face": "keyword",
+					"pattern": "\\b(Alignas|_Alignof|_Noreturn|_Static_assert|_Thread_local|sizeof|static|struct|switch|typedef|union|volatile|while|for|goto|if|inline|register|restrict|return|auto|break|case|const|continue|default|do|else|enum|extern)\\b"
+				},
+				{
+					"type": "push",
+					"face": "comment",
+					"pattern": "/\\*",
+					"sub_highlighter": "multiline_comment"
+				}
+			]
+		}
+	]
+}

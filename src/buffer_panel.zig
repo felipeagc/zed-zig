@@ -2251,48 +2251,12 @@ pub const BufferPanel = struct {
         visual_key_map = try KeyMap.init(allocator);
         visual_line_key_map = try KeyMap.init(allocator);
 
-        g_plain_filetype = try FileType.init(allocator, "plain", .{
-            .increase_indent_pattern = "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
-            .decrease_indent_pattern = "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
-            .indent_next_line_pattern = "^.*\\)\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$",
-            .zero_indent_pattern = "^\\s*#",
-            .formatter_command = "clang-format",
-            .brackets = &[_]FileType.Bracket{
-                .{ .open = "\"", .close = "\"" },
-                .{ .open = "\'", .close = "\'" },
-                .{ .open = "{", .close = "}" },
-                .{ .open = "(", .close = ")" },
-                .{ .open = "[", .close = "]" },
-            },
-            .highlighter = try Highlighter.init(
-                allocator,
-                .default,
-                &[_]Highlighter.Pattern{
-                    .{
-                        .face_type = .keyword,
-                        .pattern = "\\b(" ++
-                            "_Alignas|_Alignof|_Noreturn|_Static_assert|_Thread_local|" ++
-                            "sizeof|static|struct|switch|typedef|union|volatile|while|" ++
-                            "for|goto|if|inline|register|restrict|return|" ++
-                            "auto|break|case|const|continue|default|do|else|enum|extern" ++
-                            ")\\b",
-                    },
-                    .{
-                        .kind = .push,
-                        .face_type = .comment,
-                        .pattern = "/\\*",
-                        .sub_highlighter_is_owned = true,
-                        .sub_highlighter = try Highlighter.init(allocator, .comment, &[_]Highlighter.Pattern{
-                            .{
-                                .kind = .pop,
-                                .face_type = .comment,
-                                .pattern = "\\*/",
-                            },
-                        }),
-                    },
-                },
-            ),
-        });
+        g_plain_filetype = try FileType.initFromJson(
+            allocator,
+            "plain",
+            @embedFile("../filetypes/c.json"),
+        );
+
         try registerFileType(g_plain_filetype);
 
         const normal_key_maps = [_]*KeyMap{
