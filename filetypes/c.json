@@ -43,13 +43,28 @@
 			]
 		},
 		{
+			"name": "char",
+			"default_face": "string",
+			"patterns": [
+				{
+					"face": "constant",
+					"pattern": "\\\\."
+				},
+				{
+					"face": "constant",
+					"pattern": "\\%[^\"']"
+				},
+				{
+					"type": "pop",
+					"face": "string",
+					"pattern": "'"
+				}
+			]
+		},
+		{
 			"name": "root",
 			"default_face": "default",
 			"patterns": [
-				{
-					"face": "keyword",
-					"pattern": "\\b(Alignas|_Alignof|_Noreturn|_Static_assert|_Thread_local|sizeof|static|struct|switch|typedef|union|volatile|while|for|goto|if|inline|register|restrict|return|auto|break|case|const|continue|default|do|else|enum|extern)\\b"
-				},
 				{
 					"type": "push",
 					"face": "comment",
@@ -61,6 +76,60 @@
 					"face": "string",
 					"pattern": "\"",
 					"sub_highlighter": "string"
+				},
+				{
+					"type": "push",
+					"face": "string",
+					"pattern": "'",
+					"sub_highlighter": "char"
+				},
+				{
+					"face": "keyword",
+					"pattern": "\\b(Alignas|_Alignof|_Noreturn|_Static_assert|_Thread_local|sizeof|static|struct|switch|typedef|union|volatile|while|for|goto|if|inline|register|restrict|return|auto|break|case|const|continue|default|do|else|enum|extern)\\b"
+				},
+				{
+					"face": "type",
+					"pattern": "\\b(void|_Bool|bool|_Atomic|_Complex|_Decimal128|_Decimal32|_Decimal64|_Generic|_Imaginary|char|short|int|long|signed|unsigned|float|double|uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t|size_t|ptrdiff_t|intptr_t|uintptr_t)\\b"
+				},
+				{
+					"face": "preprocessor",
+					"pattern": "^[\\s]*(#include|#if|#endif|#ifdef|#ifndef|#else|#elif|#pragma|#define|#undef)\\b"
+				},
+				{
+					"face": "constant",
+					"pattern": "\\b((((\\d+\\.\\d*)|(0x[0-9a-fA-F]+|\\d+))f?[uU]?[lL]?[lL]?)|true|false|NULL|__LINE__|__FILE__|__DATE__|__TIME__|__cplusplus|__STDC__|__STDC_VERSION__|__STDC_HOSTED__)\\b"
+				},
+				{
+					"face": "string",
+					"pattern": "(?<=#include)((?:\\s+)\\<.*\\>)"
+				},
+				{
+					"face": "label",
+					"pattern": "\\b(\\w+)(?=:)"
+				},
+				{
+					"face": "type",
+					"pattern": "\\b(\\w+)(?=((\\s+)|((\\s*\\*+)+))\\w+\\s*[\\[\\(;=,])"
+				},
+				{
+					"face": "function",
+					"pattern": "\\b\\w+(?:\\s*)(?=\\()"
+				},
+				{
+					"face": "constant",
+					"pattern": "(?<=\\[)(\\w+)(?=\\])"
+				},
+				{
+					"face": "operator",
+					"pattern": "([\\.\\&\\*\\+\\-\\/\\%\\!\\=\\?\\~\\^\\|])"
+				},
+				{
+					"face": "punctuation",
+					"pattern": "([\\(\\)\\[\\]\\{\\}])"
+				},
+				{
+					"face": "comment",
+					"pattern": "(//.*$)"
 				}
 			]
 		}
