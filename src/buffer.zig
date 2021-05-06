@@ -4,13 +4,17 @@ const ArrayList = std.ArrayList;
 const mem = std.mem;
 const util = @import("util.zig");
 const FileType = @import("filetype.zig").FileType;
+const HighlighterState = @import("highlighter.zig").HighlighterState;
+const Token = @import("highlighter.zig").Token;
 
 const Line = struct {
     content: ArrayList(u8),
+    tokens: ArrayList(Token),
 
     fn init(allocator: *Allocator, content: []const u8) !Line {
         var line = Line{
             .content = ArrayList(u8).init(allocator),
+            .tokens = ArrayList(Token).init(allocator),
         };
         try line.content.appendSlice(content);
         return line;
@@ -18,6 +22,7 @@ const Line = struct {
 
     fn deinit(self: *@This()) void {
         self.content.deinit();
+        self.tokens.deinit();
     }
 };
 
@@ -62,6 +67,8 @@ pub const Buffer = struct {
     name: []const u8,
     absolute_path: ?[]const u8,
     filetype: *FileType,
+    highlighted_line_count: usize = 0,
+    highlighter_state: ?*HighlighterState = null,
 
     pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
         var self = try allocator.create(@This());
@@ -178,6 +185,10 @@ pub const Buffer = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        if (self.highlighter_state) |highlight_state| {
+            highlight_state.deinit();
+        }
+
         for (self.lines.items) |*line| {
             line.deinit();
         }
@@ -224,6 +235,8 @@ pub const Buffer = struct {
         comptime options: TextOpOptions,
     ) !void {
         if (text.len == 0) return;
+
+        defer self.resetHighlighting(line_index) catch {};
 
         var actual_line_index = line_index;
         var actual_column_index = column_index;
@@ -318,6 +331,8 @@ pub const Buffer = struct {
         );
 
         if (result.line_count == 0) return;
+
+        defer self.resetHighlighting(line_index) catch {};
 
         {
             const first_line: *Line = &self.lines.items[line_index];
@@ -699,6 +714,116 @@ pub const Buffer = struct {
         }
 
         return distance;
+    }
+
+    pub fn resetHighlighting(self: *Buffer, start_line: usize) !void {
+        if (start_line >= self.lines.items.len) {
+            return;
+        }
+
+        var maybe_first_token: ?Token = null;
+
+        var line_to_reset: usize = start_line;
+
+        if (start_line > 0) {
+            var line_index = start_line;
+            while (line_index > 0) {
+                line_index -= 1;
+                const line = &self.lines.items[line_index];
+                if (line.tokens.items.len > 0) {
+                    maybe_first_token = line.tokens.items[line.tokens.items.len - 1];
+                    break;
+                }
+            }
+        }
+
+        if (maybe_first_token) |first_token| {
+            switch (first_token.kind) {
+                .inside_delimeter,
+                .delimeter_start,
+                .delimeter_end,
+                => {
+                    var line_index = start_line;
+                    outer: while (line_index > 0) {
+                        line_index -= 1;
+                        const line = &self.lines.items[line_index];
+
+                        var token_index = line.tokens.items.len;
+                        while (token_index > 0) {
+                            token_index -= 1;
+                            const token = line.tokens.items[token_index];
+                            if (token.kind == .delimeter_start) {
+                                line_to_reset = line_index;
+                                break :outer;
+                            }
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+
+        self.highlighted_line_count = std.math.min(self.highlighted_line_count, line_to_reset);
+        if (self.highlighter_state) |highlighter_state| {
+            try highlighter_state.resetStack();
+        }
+    }
+
+    // Returns true if done
+    pub fn isHighlightingDone(
+        self: *Buffer,
+        start_line: usize,
+        end_line: usize,
+    ) callconv(.Inline) bool {
+        var actual_end_line: usize = end_line;
+        if (actual_end_line >= self.lines.items.len) {
+            actual_end_line = self.lines.items.len - 1;
+        }
+        return self.highlighted_line_count > actual_end_line;
+    }
+
+    // Returns true if done
+    pub fn highlightRange(
+        self: *Buffer,
+        start_line: usize,
+        end_line: usize,
+    ) !bool {
+        if (self.filetype.highlighter == null) {
+            return true;
+        }
+
+        const highlighter = self.filetype.highlighter.?;
+
+        if (self.highlighter_state == null) {
+            self.highlighter_state = try HighlighterState.init(highlighter);
+        }
+
+        var highlighter_state = self.highlighter_state.?;
+
+        var actual_end_line: usize = end_line;
+        if (actual_end_line >= self.lines.items.len) {
+            actual_end_line = self.lines.items.len - 1;
+        }
+
+        const max_time: u64 = @floatToInt(u64, (1.0 / 60.0) * 0.8 * 1.0e9);
+
+        var timer = try std.time.Timer.start();
+        var time_taken: u64 = 0;
+
+        while (!self.isHighlightingDone(start_line, actual_end_line) and
+            time_taken < max_time)
+        {
+            const line_index = self.highlighted_line_count;
+            var line: *Line = &self.lines.items[line_index];
+
+            line.tokens.shrinkRetainingCapacity(0);
+            try highlighter_state.highlightLine(&line.tokens, line.content.items);
+            self.highlighted_line_count += 1;
+
+            time_taken = timer.read();
+        }
+
+        return self.isHighlightingDone(start_line, actual_end_line);
     }
 };
 

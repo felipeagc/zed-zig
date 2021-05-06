@@ -133,12 +133,14 @@ pub const Highlighter = struct {
         face_type: FaceType,
         pattern: []const u8,
         sub_highlighter: ?*Highlighter = null,
+        sub_highlighter_is_owned: bool = true,
     };
 
     const InternalPattern = struct {
         kind: PatternType,
         face_type: FaceType,
         sub_highlighter: ?*Highlighter,
+        sub_highlighter_is_owned: bool = true,
     };
 
     pub fn init(
@@ -160,6 +162,7 @@ pub const Highlighter = struct {
                 .kind = pattern.kind,
                 .face_type = pattern.face_type,
                 .sub_highlighter = pattern.sub_highlighter,
+                .sub_highlighter_is_owned = pattern.sub_highlighter_is_owned,
             };
         }
 
@@ -175,7 +178,9 @@ pub const Highlighter = struct {
     pub fn deinit(self: *Highlighter) void {
         for (self.patterns) |pattern| {
             if (pattern.sub_highlighter) |sub_highlighter| {
-                sub_highlighter.deinit();
+                if (pattern.sub_highlighter_is_owned) {
+                    sub_highlighter.deinit();
+                }
             }
         }
 
@@ -299,7 +304,7 @@ pub const HighlighterState = struct {
             }
         }
 
-        if (match_end < text.len) {
+        if (last_end < text.len) {
             const token = Token{
                 .kind = if (self.stack.items.len > 1)
                     TokenType.inside_delimeter
@@ -340,6 +345,7 @@ test "highlighter" {
             .kind = .push,
             .face_type = .comment,
             .pattern = "/\\*",
+            .sub_highlighter_is_owned = true,
             .sub_highlighter = try Highlighter.init(allocator, .comment, &[_]Highlighter.Pattern{
                 .{
                     .kind = .pop,
@@ -357,10 +363,14 @@ test "highlighter" {
     var tokens = std.ArrayList(Token).init(allocator);
     defer tokens.deinit();
 
-    const text =
-        \\const /*int main() { case hey
-        \\hello*/  printf("hello, world")
-        \\}
+    // const text =
+    //     \\const /*int main() { case hey
+    //     \\hello*/  printf("hello, world")
+    //     \\}
+    // ;
+
+    const text = 
+        \\#if (defined(__GNUC__) || defined(__clang__)) /* s7 uses PRId64 so (for example) g++ 4.4 is too old */
     ;
 
     var iter = mem.split(text, "\n");

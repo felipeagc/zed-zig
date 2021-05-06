@@ -10,6 +10,8 @@ const Command = @import("editor.zig").Command;
 const CommandRegistry = @import("editor.zig").CommandRegistry;
 const util = @import("util.zig");
 const Regex = @import("regex.zig").Regex;
+const Highlighter = @import("highlighter.zig").Highlighter;
+const FaceType = @import("highlighter.zig").FaceType;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 
@@ -223,9 +225,41 @@ pub const BufferPanel = struct {
         }
     }
 
+    fn drawToken(
+        self: *BufferPanel,
+        text: []const u8,
+        face: FaceType,
+        font: *renderer.Font,
+        font_size: u32,
+        x: i32,
+        y: i32,
+    ) callconv(.Inline) !i32 {
+        var advance: i32 = 0;
+
+        const color_scheme = editor.getColorScheme();
+        renderer.setColor(color_scheme.getFace(face).foreground);
+
+        var iter = std.unicode.Utf8View.initUnchecked(text).iterator();
+        while (iter.nextCodepoint()) |codepoint| {
+            advance += try renderer.drawCodepoint(
+                codepoint,
+                font,
+                font_size,
+                x + advance,
+                y,
+                .{
+                    .tab_width = @intCast(i32, self.buffer.filetype.tab_width),
+                },
+            );
+        }
+
+        return advance;
+    }
+
     fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
+        // TODO: use actual delta time
         defer self.scroll_y.update(1.0 / 60.0);
         defer self.scroll_x.update(1.0 / 60.0);
 
@@ -253,6 +287,10 @@ pub const BufferPanel = struct {
             last_line = @intCast(usize, line_count) - 1;
         }
         last_line = std.math.max(first_line, last_line);
+
+        if (!try self.buffer.highlightRange(first_line, last_line)) {
+            renderer.requestRedraw();
+        }
 
         if (self.scroll_to_cursor) {
             const float_char_height = @intToFloat(f64, char_height);
@@ -366,18 +404,28 @@ pub const BufferPanel = struct {
             const line_y = self.getLineY(current_line_index, &rect, char_height);
 
             var advance: i32 = 0;
-
-            var iter = std.unicode.Utf8View.initUnchecked(line.content.items).iterator();
-            while (iter.nextCodepoint()) |codepoint| {
-                advance += try renderer.drawCodepoint(
-                    codepoint,
+            var line_end_pos: usize = 0;
+            for (line.tokens.items) |token| {
+                advance += try self.drawToken(
+                    line.content.items[line_end_pos .. line_end_pos + token.length],
+                    token.face_type,
                     font,
                     font_size,
                     rect.x + advance,
                     line_y,
-                    .{
-                        .tab_width = @intCast(i32, self.buffer.filetype.tab_width),
-                    },
+                );
+                line_end_pos += token.length;
+            }
+
+            const remaining_text = line.content.items[line_end_pos..];
+            if (remaining_text.len > 0) {
+                advance += try self.drawToken(
+                    remaining_text,
+                    FaceType.default,
+                    font,
+                    font_size,
+                    rect.x + advance,
+                    line_y,
                 );
             }
         }
@@ -385,7 +433,9 @@ pub const BufferPanel = struct {
         // Draw cursor
         {
             const cursor_line_content = try self.buffer.getLine(cursor.line);
-            const cursor_line_length = try std.unicode.utf8CountCodepoints(cursor_line_content);
+            const cursor_line_length = try std.unicode.utf8CountCodepoints(
+                cursor_line_content,
+            );
 
             var cursor_x: i32 = rect.x;
             const cursor_y = rect.y - @floatToInt(
@@ -526,9 +576,17 @@ pub const BufferPanel = struct {
 
                 if (!skip_insert) {
                     if (is_opener) {
-                        try self.buffer.insert(used_bracket.?.close, self.cursor.line, self.cursor.column);
+                        try self.buffer.insert(
+                            used_bracket.?.close,
+                            self.cursor.line,
+                            self.cursor.column,
+                        );
                     }
-                    try self.buffer.insert(inserted_buf, self.cursor.line, self.cursor.column);
+                    try self.buffer.insert(
+                        inserted_buf,
+                        self.cursor.line,
+                        self.cursor.column,
+                    );
                 }
 
                 self.cursor.column += 1;
@@ -537,13 +595,17 @@ pub const BufferPanel = struct {
 
                 if (is_opener or is_closer) {
                     const leading_whitespace_before: usize =
-                        getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
+                        getLeadingWhitespaceCodepointCount(
+                        try self.buffer.getLine(self.cursor.line),
+                    );
 
                     if (self.cursor.column <= (leading_whitespace_before + 1)) {
                         try self.autoIndentSingleLine(self.cursor.line);
 
                         const leading_whitespace_after: usize =
-                            getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
+                            getLeadingWhitespaceCodepointCount(
+                            try self.buffer.getLine(self.cursor.line),
+                        );
                         self.cursor.column = leading_whitespace_after + 1;
                     }
                 }
@@ -667,7 +729,12 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
 
         if (self.cursor.column > 0) {
-            const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column - 1, 1);
+            const content = try self.buffer.getContent(
+                self.allocator,
+                self.cursor.line,
+                self.cursor.column - 1,
+                1,
+            );
             defer self.allocator.free(content);
             try renderer.setClipboardString(content);
             try self.buffer.delete(self.cursor.line, self.cursor.column - 1, 1);
@@ -687,7 +754,12 @@ pub const BufferPanel = struct {
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
-        const content = try self.buffer.getContent(self.allocator, self.cursor.line, 0, line_length + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            self.cursor.line,
+            0,
+            line_length + 1,
+        );
         defer self.allocator.free(content);
 
         if (self.cursor.line == 0) {
@@ -799,7 +871,9 @@ pub const BufferPanel = struct {
         self.cursor.line += 1;
 
         try self.autoIndentSingleLine(self.cursor.line);
-        self.cursor.column = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(self.cursor.line));
+        self.cursor.column = try std.unicode.utf8CountCodepoints(
+            try self.buffer.getLine(self.cursor.line),
+        );
 
         try self.fixupCursor();
     }
@@ -817,7 +891,9 @@ pub const BufferPanel = struct {
         self.cursor.column = 0;
 
         try self.autoIndentSingleLine(self.cursor.line);
-        self.cursor.column = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(self.cursor.line));
+        self.cursor.column = try std.unicode.utf8CountCodepoints(
+            try self.buffer.getLine(self.cursor.line),
+        );
 
         try self.fixupCursor();
     }
@@ -907,13 +983,23 @@ pub const BufferPanel = struct {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
         if (!(self.cursor.column == 0 and self.cursor.line == 0)) {
             try insertModeMoveLeft(panel, &[_][]const u8{});
-            const first_content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column, 1);
+            const first_content = try self.buffer.getContent(
+                self.allocator,
+                self.cursor.line,
+                self.cursor.column,
+                1,
+            );
             defer self.allocator.free(first_content);
             try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
 
             if (mem.eql(u8, first_content, " ")) {
                 while (self.cursor.column > 0 and self.cursor.column % self.buffer.filetype.tab_width != 0) {
-                    const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column - 1, 1);
+                    const content = try self.buffer.getContent(
+                        self.allocator,
+                        self.cursor.line,
+                        self.cursor.column - 1,
+                        1,
+                    );
                     defer self.allocator.free(content);
                     if (!mem.eql(u8, content, " ")) {
                         break;
@@ -956,7 +1042,9 @@ pub const BufferPanel = struct {
         }
 
         try self.autoIndentSingleLine(self.cursor.line);
-        self.cursor.column = getLeadingWhitespaceCodepointCount(try self.buffer.getLine(self.cursor.line));
+        self.cursor.column = getLeadingWhitespaceCodepointCount(
+            try self.buffer.getLine(self.cursor.line),
+        );
 
         try self.fixupCursor();
     }
@@ -987,18 +1075,28 @@ pub const BufferPanel = struct {
         const clipboard_content = (try renderer.getClipboardString(self.allocator)) orelse return;
         defer self.allocator.free(clipboard_content);
 
-        const content_codepoint_count = try std.unicode.utf8CountCodepoints(clipboard_content);
+        const content_codepoint_count = try std.unicode.utf8CountCodepoints(
+            clipboard_content,
+        );
         if (content_codepoint_count == 0) return;
 
         if (clipboard_content[clipboard_content.len - 1] == '\n') {
             const line = try self.buffer.getLine(self.cursor.line);
             const line_length = try std.unicode.utf8CountCodepoints(line);
             try self.buffer.insert("\n", self.cursor.line, line_length);
-            try self.buffer.insert(clipboard_content[0 .. clipboard_content.len - 1], self.cursor.line + 1, 0);
+            try self.buffer.insert(
+                clipboard_content[0 .. clipboard_content.len - 1],
+                self.cursor.line + 1,
+                0,
+            );
             self.cursor.line += 1;
             self.cursor.column = 0;
         } else {
-            try self.buffer.insert(clipboard_content, self.cursor.line, self.cursor.column + 1);
+            try self.buffer.insert(
+                clipboard_content,
+                self.cursor.line,
+                self.cursor.column + 1,
+            );
             self.cursor.column += content_codepoint_count;
         }
 
@@ -1014,7 +1112,9 @@ pub const BufferPanel = struct {
         const clipboard_content = (try renderer.getClipboardString(self.allocator)) orelse return;
         defer self.allocator.free(clipboard_content);
 
-        const content_codepoint_count = try std.unicode.utf8CountCodepoints(clipboard_content);
+        const content_codepoint_count = try std.unicode.utf8CountCodepoints(
+            clipboard_content,
+        );
         if (content_codepoint_count == 0) return;
 
         if (clipboard_content[clipboard_content.len - 1] == '\n') {
@@ -1036,7 +1136,12 @@ pub const BufferPanel = struct {
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
-        const content = try self.buffer.getContent(self.allocator, self.cursor.line, 0, line_length + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            self.cursor.line,
+            0,
+            line_length + 1,
+        );
         defer self.allocator.free(content);
 
         try renderer.setClipboardString(content);
@@ -1195,13 +1300,17 @@ pub const BufferPanel = struct {
             end_pos.column = word.codepoint_start_pos;
         } else {
             end_pos.line = start_pos.line;
-            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(start_pos.line));
+            const line_length = try std.unicode.utf8CountCodepoints(
+                try self.buffer.getLine(start_pos.line),
+            );
             end_pos.column = line_length;
         }
 
         if (end_pos.line > start_pos.line) {
             end_pos.line = start_pos.line;
-            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(start_pos.line));
+            const line_length = try std.unicode.utf8CountCodepoints(
+                try self.buffer.getLine(start_pos.line),
+            );
             end_pos.column = line_length + 1;
         }
 
@@ -1234,7 +1343,9 @@ pub const BufferPanel = struct {
 
         if (end_pos.line > start_pos.line) {
             end_pos.line = start_pos.line;
-            const line_length = try std.unicode.utf8CountCodepoints(try self.buffer.getLine(start_pos.line));
+            const line_length = try std.unicode.utf8CountCodepoints(
+                try self.buffer.getLine(start_pos.line),
+            );
             end_pos.column = line_length + 1;
         }
 
@@ -1368,9 +1479,19 @@ pub const BufferPanel = struct {
         var end_pos = Position{};
         try self.getSelectionRegion(&start_pos, &end_pos);
 
-        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
 
-        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            start_pos.line,
+            start_pos.column,
+            distance + 1,
+        );
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
 
@@ -1394,9 +1515,19 @@ pub const BufferPanel = struct {
         var end_pos = Position{};
         try self.getSelectionRegion(&start_pos, &end_pos);
 
-        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
 
-        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            start_pos.line,
+            start_pos.column,
+            distance + 1,
+        );
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
 
@@ -1425,9 +1556,19 @@ pub const BufferPanel = struct {
         var end_pos = Position{};
         try self.getSelectionRegion(&start_pos, &end_pos);
 
-        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
 
-        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            start_pos.line,
+            start_pos.column,
+            distance + 1,
+        );
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
 
@@ -1457,9 +1598,19 @@ pub const BufferPanel = struct {
         const end_line = try self.buffer.getLine(end_pos.line);
         end_pos.column = try std.unicode.utf8CountCodepoints(end_line);
 
-        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
 
-        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            start_pos.line,
+            start_pos.column,
+            distance + 1,
+        );
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
 
@@ -1485,9 +1636,19 @@ pub const BufferPanel = struct {
         const end_line = try self.buffer.getLine(end_pos.line);
         end_pos.column = try std.unicode.utf8CountCodepoints(end_line);
 
-        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
 
-        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            start_pos.line,
+            start_pos.column,
+            distance + 1,
+        );
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
 
@@ -1521,9 +1682,19 @@ pub const BufferPanel = struct {
         const end_line = try self.buffer.getLine(end_pos.line);
         end_pos.column = try std.unicode.utf8CountCodepoints(end_line);
 
-        const distance = try self.buffer.getCodepointDistance(start_pos.line, start_pos.column, end_pos.line, end_pos.column);
+        const distance = try self.buffer.getCodepointDistance(
+            start_pos.line,
+            start_pos.column,
+            end_pos.line,
+            end_pos.column,
+        );
 
-        const content = try self.buffer.getContent(self.allocator, start_pos.line, start_pos.column, distance + 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            start_pos.line,
+            start_pos.column,
+            distance + 1,
+        );
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
 
@@ -2093,6 +2264,34 @@ pub const BufferPanel = struct {
                 .{ .open = "(", .close = ")" },
                 .{ .open = "[", .close = "]" },
             },
+            .highlighter = try Highlighter.init(
+                allocator,
+                .default,
+                &[_]Highlighter.Pattern{
+                    .{
+                        .face_type = .keyword,
+                        .pattern = "\\b(" ++
+                            "_Alignas|_Alignof|_Noreturn|_Static_assert|_Thread_local|" ++
+                            "sizeof|static|struct|switch|typedef|union|volatile|while|" ++
+                            "for|goto|if|inline|register|restrict|return|" ++
+                            "auto|break|case|const|continue|default|do|else|enum|extern" ++
+                            ")\\b",
+                    },
+                    .{
+                        .kind = .push,
+                        .face_type = .comment,
+                        .pattern = "/\\*",
+                        .sub_highlighter_is_owned = true,
+                        .sub_highlighter = try Highlighter.init(allocator, .comment, &[_]Highlighter.Pattern{
+                            .{
+                                .kind = .pop,
+                                .face_type = .comment,
+                                .pattern = "\\*/",
+                            },
+                        }),
+                    },
+                },
+            ),
         });
         try registerFileType(g_plain_filetype);
 

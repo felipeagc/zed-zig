@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const Regex = @import("regex.zig").Regex;
+const Highlighter = @import("highlighter.zig").Highlighter;
 
 pub const FileType = struct {
     allocator: *Allocator,
@@ -14,6 +15,7 @@ pub const FileType = struct {
     expand_tab: bool,
     formatter_command: ?[]const u8,
     brackets: []Bracket,
+    highlighter: ?*Highlighter,
 
     pub const Bracket = struct {
         open: []const u8,
@@ -29,6 +31,7 @@ pub const FileType = struct {
         expand_tab: bool = true,
         formatter_command: ?[]const u8 = null,
         brackets: []const Bracket = &[_]Bracket{},
+        highlighter: ?*Highlighter = null,
     };
 
     pub fn init(allocator: *Allocator, name: []const u8, options: Options) !*FileType {
@@ -76,12 +79,17 @@ pub const FileType = struct {
             .expand_tab = options.expand_tab,
             .formatter_command = if (options.formatter_command) |command| try allocator.dupe(u8, command) else null,
             .brackets = brackets,
+            .highlighter = options.highlighter,
         };
 
         return self;
     }
 
     pub fn deinit(self: *FileType) void {
+        if (self.highlighter) |highlighter| {
+            highlighter.deinit();
+        }
+
         for (self.brackets) |bracket| {
             self.allocator.free(bracket.open);
             self.allocator.free(bracket.close);
