@@ -24,6 +24,25 @@
 			]
 		},
 		{
+			"name": "string",
+			"default_face": "string",
+			"patterns": [
+				{
+					"face": "constant",
+					"pattern": "\\\\."
+				},
+				{
+					"face": "constant",
+					"pattern": "\\%[^\"']"
+				},
+				{
+					"type": "pop",
+					"face": "string",
+					"pattern": "\""
+				}
+			]
+		},
+		{
 			"name": "root",
 			"default_face": "default",
 			"patterns": [
@@ -36,6 +55,12 @@
 					"face": "comment",
 					"pattern": "/\\*",
 					"sub_highlighter": "multiline_comment"
+				},
+				{
+					"type": "push",
+					"face": "string",
+					"pattern": "\"",
+					"sub_highlighter": "string"
 				}
 			]
 		}

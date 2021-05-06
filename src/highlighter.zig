@@ -211,12 +211,22 @@ pub const HighlighterState = struct {
 
     pub fn deinit(self: *HighlighterState) void {
         const allocator = self.highlighter.allocator;
+
+        for (self.stack.items) |state, i| {
+            if (i > 0) state.deinit();
+        }
+
         self.stack.deinit();
         allocator.destroy(self);
     }
 
     pub fn resetStack(self: *HighlighterState) !void {
+        for (self.stack.items) |state, i| {
+            if (i > 0) state.deinit();
+        }
+
         self.stack.shrinkRetainingCapacity(0);
+
         try self.stack.append(self);
     }
 
@@ -291,10 +301,9 @@ pub const HighlighterState = struct {
                 .pop => {
                     last_regex_end += @intCast(isize, match_end);
 
-                    current_state.deinit();
-
-                    _ = self.stack.pop();
+                    var popped_state = self.stack.pop();
                     std.debug.assert(self.stack.items.len > 0);
+                    popped_state.deinit();
                     current_state = self.stack.items[self.stack.items.len - 1];
 
                     current_state.highlighter.regex.setBuffer(
@@ -311,7 +320,7 @@ pub const HighlighterState = struct {
                 else
                     TokenType.normal,
                 .face_type = current_state.highlighter.default_face,
-                .length = text.len - match_end,
+                .length = text.len - @intCast(usize, last_end),
             };
             try tokens.append(token);
         }
@@ -369,7 +378,7 @@ test "highlighter" {
     //     \\}
     // ;
 
-    const text = 
+    const text =
         \\#if (defined(__GNUC__) || defined(__clang__)) /* s7 uses PRId64 so (for example) g++ 4.4 is too old */
     ;
 
