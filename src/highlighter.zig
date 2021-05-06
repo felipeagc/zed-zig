@@ -22,7 +22,15 @@ pub const FaceType = enum {
     status_line,
     status_line_focused,
     keyword,
+    @"type",
+    constant,
     comment,
+    preprocessor,
+    string,
+    label,
+    punctuation,
+    operator,
+    function,
     max,
 };
 
@@ -68,8 +76,24 @@ pub const ColorScheme = struct {
                 .{ .foreground = "#0c151b", .background = "#87d7ff" },
                 // keyword:
                 .{ .foreground = "#d4f0ff" },
+                // type:
+                .{ .foreground = "#87d7ff" },
+                // constant:
+                .{ .foreground = "#70c0b1" },
                 // comment:
                 .{ .foreground = "#808080" },
+                // preprocessor:
+                .{ .foreground = "#b5bd68" },
+                // string:
+                .{ .foreground = "#e7c547" },
+                // label:
+                .{ .foreground = "#70c0b1" },
+                // punctuation:
+                .{ .foreground = "#ffffff" },
+                // operator:
+                .{ .foreground = "#d4f0ff" },
+                // function:
+                .{ .foreground = "#b5bd68" },
             },
         );
     }
