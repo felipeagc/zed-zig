@@ -675,11 +675,11 @@ pub fn endFrame() !void {
     c.glfwSwapBuffers(g_renderer.window);
 }
 
-pub fn requestRedraw() void {
+pub fn requestRedraw() callconv(.Inline) void {
     g_renderer.should_redraw = true;
 }
 
-pub fn getClipboardString(allocator: *Allocator) !?[]const u8 {
+pub fn getClipboardString(allocator: *Allocator) callconv(.Inline) !?[]const u8 {
     var maybe_c_str = c.glfwGetClipboardString(g_renderer.window);
     if (maybe_c_str) |c_str| {
         return try allocator.dupe(u8, mem.spanZ(c_str));
@@ -687,17 +687,17 @@ pub fn getClipboardString(allocator: *Allocator) !?[]const u8 {
     return null;
 }
 
-pub fn setClipboardString(str: []const u8) !void {
+pub fn setClipboardString(str: []const u8) callconv(.Inline) !void {
     var str_z = try g_renderer.allocator.dupeZ(u8, str);
     defer g_renderer.allocator.free(str_z);
     c.glfwSetClipboardString(g_renderer.window, str_z);
 }
 
-pub fn getWindowSize(w: *i32, h: *i32) !void {
+pub fn getWindowSize(w: *i32, h: *i32) callconv(.Inline) !void {
     c.glfwGetFramebufferSize(g_renderer.window, w, h);
 }
 
-fn pushCommand(cmd: Command) !void {
+fn pushCommand(cmd: Command) callconv(.Inline) !void {
     g_renderer.last_draw_indexed_command = null;
     if (cmd == .draw) {
         g_renderer.last_draw_indexed_command = g_renderer.commands.items.len;
@@ -705,11 +705,11 @@ fn pushCommand(cmd: Command) !void {
     try g_renderer.commands.append(cmd);
 }
 
-pub fn setColor(color: Color) void {
+pub fn setColor(color: Color) callconv(.Inline) void {
     g_renderer.current_color = color;
 }
 
-pub fn setScissor(rect: Rect) !void {
+pub fn setScissor(rect: Rect) callconv(.Inline) !void {
     var win_width: i32 = undefined;
     var win_height: i32 = undefined;
     try getWindowSize(&win_width, &win_height);
@@ -727,7 +727,7 @@ pub fn setScissor(rect: Rect) !void {
 
 pub fn drawRect(
     rect: Rect,
-) !void {
+) callconv(.Inline) !void {
     try drawRectInternal(
         &rect,
         &Rect{ .x = 0, .y = 0, .w = 1, .h = 1 },
@@ -743,14 +743,22 @@ pub fn drawCodepoint(
     font_size: u32,
     x: i32,
     y: i32,
-) !i32 {
+    options: struct {
+        tab_width: i32 = 4,
+    },
+) callconv(.Inline) !i32 {
     const atlas = try font.getAtlas(font_size);
     const glyph = atlas.getGlyph(codepoint);
 
     const max_ascender = font.getCharMaxAscender(font_size);
 
+    var glyph_advance: i32 = glyph.advance;
+
     switch (codepoint) {
-        '\t' | '\n' | '\r' => {},
+        '\t' => {
+            glyph_advance *= options.tab_width;
+        },
+        '\n' | '\r' => {},
         else => {
             try drawRectInternal(
                 &Rect{
@@ -772,7 +780,7 @@ pub fn drawCodepoint(
         },
     }
 
-    return glyph.*.advance;
+    return glyph_advance;
 }
 
 pub fn drawText(
@@ -784,7 +792,7 @@ pub fn drawText(
     options: struct {
         tab_width: i32 = 4,
     },
-) !i32 {
+) callconv(.Inline) !i32 {
     var advance: i32 = 0;
 
     const atlas = try font.getAtlas(font_size);

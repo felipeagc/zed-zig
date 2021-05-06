@@ -365,14 +365,21 @@ pub const BufferPanel = struct {
             const line = self.buffer.lines.items[current_line_index];
             const line_y = self.getLineY(current_line_index, &rect, char_height);
 
-            _ = try renderer.drawText(
-                line.content.items,
-                font,
-                font_size,
-                rect.x,
-                line_y,
-                .{},
-            );
+            var advance: i32 = 0;
+
+            var iter = std.unicode.Utf8View.initUnchecked(line.content.items).iterator();
+            while (iter.nextCodepoint()) |codepoint| {
+                advance += try renderer.drawCodepoint(
+                    codepoint,
+                    font,
+                    font_size,
+                    rect.x + advance,
+                    line_y,
+                    .{
+                        .tab_width = @intCast(i32, self.buffer.filetype.tab_width),
+                    },
+                );
+            }
         }
 
         // Draw cursor
@@ -430,6 +437,9 @@ pub const BufferPanel = struct {
                             font_size,
                             cursor_x,
                             cursor_y,
+                            .{
+                                .tab_width = @intCast(i32, self.buffer.filetype.tab_width),
+                            },
                         );
                     },
                 }
@@ -1798,7 +1808,8 @@ pub const BufferPanel = struct {
 
     fn autoIndentRegion(self: *BufferPanel, start_line: usize, end_line: usize) !void {
         if (self.buffer.filetype.increase_indent_regex == null or
-            self.buffer.filetype.decrease_indent_regex == null) {
+            self.buffer.filetype.decrease_indent_regex == null)
+        {
             return;
         }
 
