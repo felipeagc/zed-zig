@@ -50,7 +50,7 @@ fn positionIsBetween(pos: Position, start: Position, end: Position) bool {
 }
 
 var g_filetypes: std.StringArrayHashMap(*FileType) = undefined;
-var g_plain_filetype: *FileType = undefined;
+var g_filetype_extensions: std.StringArrayHashMap(*FileType) = undefined;
 var g_buffers: std.ArrayList(*Buffer) = undefined;
 var command_registry: CommandRegistry = undefined;
 var normal_key_map: KeyMap = undefined;
@@ -123,9 +123,13 @@ pub const BufferPanel = struct {
             }
         }
 
+        var ext = std.fs.path.extension(path);
+        if (ext.len > 0 and ext[0] == '.') ext = ext[1..]; // Remove '.'
+        const filetype = g_filetype_extensions.get(ext) orelse getFileType("default");
+
         const buffer = try Buffer.initFromFile(allocator, .{
             .path = actual_path,
-            .filetype = getFileType("plain"),
+            .filetype = filetype,
         });
         try g_buffers.append(buffer);
         return buffer;
@@ -137,6 +141,10 @@ pub const BufferPanel = struct {
         }
 
         try g_filetypes.put(filetype.name, filetype);
+
+        for (filetype.extensions) |ext| {
+            try g_filetype_extensions.put(ext, filetype);
+        }
     }
 
     pub fn getFileType(name: []const u8) *FileType {
@@ -144,7 +152,7 @@ pub const BufferPanel = struct {
             return filetype;
         }
 
-        return g_plain_filetype;
+        return g_filetypes.get("default") orelse unreachable;
     }
 
     fn scrollToCursor(self: *BufferPanel) void {
@@ -2245,19 +2253,24 @@ pub const BufferPanel = struct {
     fn registerVT(allocator: *Allocator) anyerror!void {
         g_buffers = std.ArrayList(*Buffer).init(allocator);
         g_filetypes = std.StringArrayHashMap(*FileType).init(allocator);
+        g_filetype_extensions = std.StringArrayHashMap(*FileType).init(allocator);
         command_registry = CommandRegistry.init(allocator);
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
         visual_key_map = try KeyMap.init(allocator);
         visual_line_key_map = try KeyMap.init(allocator);
 
-        g_plain_filetype = try FileType.initFromJson(
+        try registerFileType(try FileType.initFromJson(
             allocator,
-            "plain",
-            @embedFile("../filetypes/c.json"),
-        );
+            "default",
+            @embedFile("../filetypes/default.json"),
+        ));
 
-        try registerFileType(g_plain_filetype);
+        try registerFileType(try FileType.initFromJson(
+            allocator,
+            "c",
+            @embedFile("../filetypes/c.json"),
+        ));
 
         const normal_key_maps = [_]*KeyMap{
             &normal_key_map,
@@ -2367,6 +2380,7 @@ pub const BufferPanel = struct {
         normal_key_map.deinit();
         command_registry.deinit();
         g_filetypes.deinit();
+        g_filetype_extensions.deinit();
         g_buffers.deinit();
     }
 
@@ -2382,7 +2396,7 @@ pub const BufferPanel = struct {
             "",
             .{
                 .name = SCRATCH_BUFFER_NAME,
-                .filetype = getFileType("plain"),
+                .filetype = getFileType("default"),
             },
         );
 

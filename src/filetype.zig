@@ -8,6 +8,7 @@ const FaceType = @import("highlighter.zig").FaceType;
 pub const FileType = struct {
     allocator: *Allocator,
     name: []const u8,
+    extensions: [][]const u8,
     increase_indent_regex: ?Regex = null,
     decrease_indent_regex: ?Regex = null,
     indent_next_line_regex: ?Regex = null,
@@ -37,6 +38,7 @@ pub const FileType = struct {
     };
 
     const FileTypeDesc = struct {
+        extensions: [][]const u8 = &[_][]const u8{},
         increase_indent_pattern: ?[]const u8 = null,
         decrease_indent_pattern: ?[]const u8 = null,
         indent_next_line_pattern: ?[]const u8 = null,
@@ -49,6 +51,7 @@ pub const FileType = struct {
     };
 
     pub const Options = struct {
+        extensions: [][]const u8 = &[_][]const u8{},
         increase_indent_pattern: ?[]const u8 = null,
         decrease_indent_pattern: ?[]const u8 = null,
         indent_next_line_pattern: ?[]const u8 = null,
@@ -94,9 +97,15 @@ pub const FileType = struct {
             brackets[i].close = try allocator.dupe(u8, bracket.close);
         }
 
+        var extensions = try allocator.alloc([]const u8, options.extensions.len);
+        for (options.extensions) |ext, i| {
+            extensions[i] = try allocator.dupe(u8, ext);
+        }
+
         self.* = FileType{
             .allocator = allocator,
             .name = try allocator.dupe(u8, name),
+            .extensions = extensions,
             .increase_indent_regex = increase_indent_regex,
             .decrease_indent_regex = decrease_indent_regex,
             .indent_next_line_regex = indent_next_line_regex,
@@ -162,6 +171,7 @@ pub const FileType = struct {
         }
 
         const options = Options{
+            .extensions = desc.extensions,
             .increase_indent_pattern = desc.increase_indent_pattern,
             .decrease_indent_pattern = desc.decrease_indent_pattern,
             .indent_next_line_pattern = desc.indent_next_line_pattern,
@@ -175,6 +185,11 @@ pub const FileType = struct {
     }
 
     pub fn deinit(self: *FileType) void {
+        for (self.extensions) |ext| {
+            self.allocator.free(ext);
+        }
+        self.allocator.free(self.extensions);
+
         if (self.highlighter) |highlighter| {
             highlighter.deinit();
         }

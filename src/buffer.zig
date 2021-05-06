@@ -845,7 +845,7 @@ test "buffer" {
     const allocator = std.testing.allocator;
     const expect = std.testing.expect;
 
-    const filetype = try FileType.init(allocator, "plain", .{});
+    const filetype = try FileType.init(allocator, "default", .{});
     defer filetype.deinit();
 
     var buffer = try Buffer.initWithContent(allocator,
@@ -998,7 +998,7 @@ test "buffer2" {
     const allocator = std.testing.allocator;
     const expect = std.testing.expect;
 
-    const filetype = try FileType.init(allocator, "plain", .{});
+    const filetype = try FileType.init(allocator, "default", .{});
     defer filetype.deinit();
 
     var buffer = try Buffer.initWithContent(allocator,
