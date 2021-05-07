@@ -1,0 +1,111 @@
+{
+	"extensions": [ "zig" ],
+	"increase_indent_pattern": "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
+	"decrease_indent_pattern": "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
+	"indent_next_line_pattern": "^.*\\)\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$",
+	"formatter_command": "zig fmt --stdin",
+	"brackets": [
+		{ "open": "\"", "close": "\"" },
+		{ "open": "'", "close": "'" },
+		{ "open": "(", "close": ")" },
+		{ "open": "[", "close": "]" },
+		{ "open": "{", "close": "}" }
+	],
+	"highlighters": [
+		{
+			"name": "string",
+			"default_face": "string",
+			"patterns": [
+				{
+					"face": "constant",
+					"pattern": "\\\\."
+				},
+				{
+					"face": "constant",
+					"pattern": "\\%[^\"']"
+				},
+				{
+					"type": "pop",
+					"face": "string",
+					"pattern": "\""
+				}
+			]
+		},
+		{
+			"name": "char",
+			"default_face": "string",
+			"patterns": [
+				{
+					"face": "constant",
+					"pattern": "\\\\."
+				},
+				{
+					"face": "constant",
+					"pattern": "\\%[^\"']"
+				},
+				{
+					"type": "pop",
+					"face": "string",
+					"pattern": "'"
+				}
+			]
+		},
+		{
+			"name": "root",
+			"default_face": "default",
+			"patterns": [
+				{
+					"face": "comment",
+					"pattern": "(//.*$)"
+				},
+				{
+					"type": "push",
+					"face": "string",
+					"pattern": "\"",
+					"sub_highlighter": "string"
+				},
+				{
+					"type": "push",
+					"face": "string",
+					"pattern": "'",
+					"sub_highlighter": "char"
+				},
+				{
+					"face": "keyword",
+					"pattern": "\\b(align|allowzero|and|asm|async|await|break|catch|comptime|const|continue|defer|else|errdefer|export|extern|fn|for|if|inline|noalias|nosuspend|or|orelse|packed|pub|resume|return|linksection|suspend|switch|test|threadlocal|try|unreachable|usingnamespace|var|volatile|while)\\b"
+				},
+				{
+					"face": "type",
+					"pattern": "\\b([ui]\\d{1,3})\\b"
+				},
+				{
+					"face": "type",
+					"pattern": "\\b(struct|enum|union|error|usize|isize|f16|f32|f64|bool|type|noreturn|anyerror|anyframe|anytype|comptime_int|comptime_float|c_void|c_short|c_ushort|c_int|c_uint|c_long|c_ulong|c_longlong|c_ulonglong|c_longdouble)\\b"
+				},
+				{
+					"face": "preprocessor",
+					"pattern": "@\\w+\\b"
+				},
+				{ "face": "constant", "pattern": "\\b(true|false|null|undefined)\\b" },
+				{ "face": "constant", "pattern": "\\b(-?[\\d_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "\\b(0x[a-fA-F\\d_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "\\b(0o[0-7_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "\\b(0b[01_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "(-?\\b[\\d_]+(?:\\.[\\d_]+)?(?:[eE][+-]?[\\d_]+)?)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "(-?\\b0x[a-fA-F\\d_]+(?:\\.[a-fA-F\\d_]+)?[pP]?(?:[+-]?[\\d_]+)?)(?!\\.)\\b" },
+				{
+					"face": "function",
+					"pattern": "\\b\\w+(?:\\s*)(?=\\()"
+				},
+				{
+					"face": "operator",
+					"pattern": "([\\.\\&\\*\\+\\-\\/\\%\\!\\=\\?\\~\\^\\|])"
+				},
+				{
+					"face": "punctuation",
+					"pattern": "([\\(\\)\\[\\]\\{\\}])"
+				}
+			]
+		}
+	]
+}

@@ -2272,6 +2272,12 @@ pub const BufferPanel = struct {
             @embedFile("../filetypes/c.json"),
         ));
 
+        try registerFileType(try FileType.init(
+            allocator,
+            "zig",
+            @embedFile("../filetypes/zig.json"),
+        ));
+
         const normal_key_maps = [_]*KeyMap{
             &normal_key_map,
             &visual_key_map,
