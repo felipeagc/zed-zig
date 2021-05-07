@@ -43,7 +43,7 @@ pub const Regex = struct {
         };
     }
 
-    pub fn deinit(self: *Regex) void {
+    pub fn deinit(self: *const Regex) void {
         c.onig_regset_free(self.regset);
         self.pattern_ids.deinit();
     }

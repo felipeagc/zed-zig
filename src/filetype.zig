@@ -24,20 +24,7 @@ pub const FileType = struct {
         close: []const u8,
     };
 
-    const HighlighterPattern = struct {
-        @"type": Highlighter.PatternType = .normal,
-        face: FaceType = FaceType.default,
-        pattern: []const u8,
-        sub_highlighter: ?[]const u8 = null,
-    };
-
-    const HighlighterDesc = struct {
-        name: []const u8,
-        default_face: FaceType = FaceType.default,
-        patterns: []HighlighterPattern,
-    };
-
-    const FileTypeDesc = struct {
+    const Options = struct {
         extensions: [][]const u8 = &[_][]const u8{},
         increase_indent_pattern: ?[]const u8 = null,
         decrease_indent_pattern: ?[]const u8 = null,
@@ -47,94 +34,29 @@ pub const FileType = struct {
         expand_tab: bool = true,
         formatter_command: ?[]const u8 = null,
         brackets: []const Bracket = &[_]Bracket{},
-        highlighters: ?[]HighlighterDesc = null,
+        highlighters: ?[]struct {
+            name: []const u8,
+            default_face: FaceType = FaceType.default,
+            patterns: []struct {
+                @"type": Highlighter.PatternType = .normal,
+                face: FaceType = FaceType.default,
+                pattern: []const u8,
+                sub_highlighter: ?[]const u8 = null,
+            },
+        } = null,
     };
 
-    pub const Options = struct {
-        extensions: [][]const u8 = &[_][]const u8{},
-        increase_indent_pattern: ?[]const u8 = null,
-        decrease_indent_pattern: ?[]const u8 = null,
-        indent_next_line_pattern: ?[]const u8 = null,
-        zero_indent_pattern: ?[]const u8 = null,
-        tab_width: u32 = 4,
-        expand_tab: bool = true,
-        formatter_command: ?[]const u8 = null,
-        brackets: []const Bracket = &[_]Bracket{},
-        highlighter: ?*Highlighter = null,
-    };
-
-    pub fn init(allocator: *Allocator, name: []const u8, options: Options) !*FileType {
-        var self = try allocator.create(FileType);
-        errdefer allocator.destroy(self);
-
-        var increase_indent_regex: ?Regex = null;
-        if (options.increase_indent_pattern) |pattern| {
-            increase_indent_regex = try Regex.init(allocator);
-            try increase_indent_regex.?.addPattern(0, pattern);
-        }
-
-        var decrease_indent_regex: ?Regex = null;
-        if (options.decrease_indent_pattern) |pattern| {
-            decrease_indent_regex = try Regex.init(allocator);
-            try decrease_indent_regex.?.addPattern(0, pattern);
-        }
-
-        var indent_next_line_regex: ?Regex = null;
-        if (options.indent_next_line_pattern) |pattern| {
-            indent_next_line_regex = try Regex.init(allocator);
-            try indent_next_line_regex.?.addPattern(0, pattern);
-        }
-
-        var zero_indent_regex: ?Regex = null;
-        if (options.zero_indent_pattern) |pattern| {
-            zero_indent_regex = try Regex.init(allocator);
-            try zero_indent_regex.?.addPattern(0, pattern);
-        }
-
-        var brackets = try allocator.alloc(Bracket, options.brackets.len);
-        for (options.brackets) |bracket, i| {
-            brackets[i].open = try allocator.dupe(u8, bracket.open);
-            brackets[i].close = try allocator.dupe(u8, bracket.close);
-        }
-
-        var extensions = try allocator.alloc([]const u8, options.extensions.len);
-        for (options.extensions) |ext, i| {
-            extensions[i] = try allocator.dupe(u8, ext);
-        }
-
-        self.* = FileType{
-            .allocator = allocator,
-            .name = try allocator.dupe(u8, name),
-            .extensions = extensions,
-            .increase_indent_regex = increase_indent_regex,
-            .decrease_indent_regex = decrease_indent_regex,
-            .indent_next_line_regex = indent_next_line_regex,
-            .zero_indent_regex = zero_indent_regex,
-            .tab_width = options.tab_width,
-            .expand_tab = options.expand_tab,
-            .formatter_command = if (options.formatter_command) |command| try allocator.dupe(u8, command) else null,
-            .brackets = brackets,
-            .highlighter = options.highlighter,
-        };
-
-        return self;
-    }
-
-    pub fn initFromJson(
-        allocator: *Allocator,
-        name: []const u8,
-        json_desc: []const u8,
-    ) !*FileType {
+    pub fn init(allocator: *Allocator, name: []const u8, json_desc: []const u8) !*FileType {
         const json_options = std.json.ParseOptions{ .allocator = allocator };
 
         var stream = std.json.TokenStream.init(json_desc);
 
-        var desc = try std.json.parse(FileTypeDesc, &stream, json_options);
-        defer std.json.parseFree(FileTypeDesc, desc, json_options);
+        var options = try std.json.parse(Options, &stream, json_options);
+        defer std.json.parseFree(Options, options, json_options);
 
         var highlighter: ?*Highlighter = null;
 
-        if (desc.highlighters) |highlighter_descs| {
+        if (options.highlighters) |highlighter_descs| {
             var highlighters = std.StringHashMap(*Highlighter).init(allocator);
             defer highlighters.deinit();
 
@@ -170,18 +92,75 @@ pub const FileType = struct {
             highlighter = highlighters.get("root");
         }
 
-        const options = Options{
-            .extensions = desc.extensions,
-            .increase_indent_pattern = desc.increase_indent_pattern,
-            .decrease_indent_pattern = desc.decrease_indent_pattern,
-            .indent_next_line_pattern = desc.indent_next_line_pattern,
-            .zero_indent_pattern = desc.zero_indent_pattern,
-            .formatter_command = desc.formatter_command,
-            .brackets = desc.brackets,
+        var self = try allocator.create(FileType);
+        errdefer allocator.destroy(self);
+
+        var increase_indent_regex: ?Regex = null;
+        errdefer if (increase_indent_regex) |regex| regex.deinit();
+        if (options.increase_indent_pattern) |pattern| {
+            increase_indent_regex = try Regex.init(allocator);
+            try increase_indent_regex.?.addPattern(0, pattern);
+        }
+
+        var decrease_indent_regex: ?Regex = null;
+        errdefer if (decrease_indent_regex) |regex| regex.deinit();
+        if (options.decrease_indent_pattern) |pattern| {
+            decrease_indent_regex = try Regex.init(allocator);
+            try decrease_indent_regex.?.addPattern(0, pattern);
+        }
+
+        var indent_next_line_regex: ?Regex = null;
+        errdefer if (indent_next_line_regex) |regex| regex.deinit();
+        if (options.indent_next_line_pattern) |pattern| {
+            indent_next_line_regex = try Regex.init(allocator);
+            try indent_next_line_regex.?.addPattern(0, pattern);
+        }
+
+        var zero_indent_regex: ?Regex = null;
+        errdefer if (zero_indent_regex) |regex| regex.deinit();
+        if (options.zero_indent_pattern) |pattern| {
+            zero_indent_regex = try Regex.init(allocator);
+            try zero_indent_regex.?.addPattern(0, pattern);
+        }
+
+        var brackets = try allocator.alloc(Bracket, options.brackets.len);
+        errdefer allocator.free(brackets);
+        for (options.brackets) |bracket, i| {
+            brackets[i].open = try allocator.dupe(u8, bracket.open);
+            brackets[i].close = try allocator.dupe(u8, bracket.close);
+        }
+
+        var extensions = try allocator.alloc([]const u8, options.extensions.len);
+        errdefer {
+            for (extensions) |ext| allocator.free(ext);
+            allocator.free(extensions);
+        }
+        for (options.extensions) |ext, i| {
+            extensions[i] = try allocator.dupe(u8, ext);
+        }
+
+        const formatter_command: ?[]const u8 = if (options.formatter_command) |command|
+            try allocator.dupe(u8, command)
+        else
+            null;
+        errdefer if (formatter_command) |cmd| allocator.free(cmd);
+
+        self.* = FileType{
+            .allocator = allocator,
+            .name = try allocator.dupe(u8, name),
+            .extensions = extensions,
+            .increase_indent_regex = increase_indent_regex,
+            .decrease_indent_regex = decrease_indent_regex,
+            .indent_next_line_regex = indent_next_line_regex,
+            .zero_indent_regex = zero_indent_regex,
+            .tab_width = options.tab_width,
+            .expand_tab = options.expand_tab,
+            .formatter_command = formatter_command,
+            .brackets = brackets,
             .highlighter = highlighter,
         };
 
-        return try FileType.init(allocator, name, options);
+        return self;
     }
 
     pub fn deinit(self: *FileType) void {

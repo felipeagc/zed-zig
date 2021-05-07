@@ -2260,13 +2260,13 @@ pub const BufferPanel = struct {
         visual_key_map = try KeyMap.init(allocator);
         visual_line_key_map = try KeyMap.init(allocator);
 
-        try registerFileType(try FileType.initFromJson(
+        try registerFileType(try FileType.init(
             allocator,
             "default",
             @embedFile("../filetypes/default.json"),
         ));
 
-        try registerFileType(try FileType.initFromJson(
+        try registerFileType(try FileType.init(
             allocator,
             "c",
             @embedFile("../filetypes/c.json"),
