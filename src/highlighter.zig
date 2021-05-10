@@ -97,6 +97,41 @@ pub const ColorScheme = struct {
             },
         );
     }
+    
+    pub fn jellybeansTheme(allocator: *Allocator) !ColorScheme {
+        return comptime try ColorScheme.init(
+            [_]FaceDesc{
+                // default:
+                .{ .foreground = "#e8e8d3", .background = "#151515" },
+                // border:
+                .{ .foreground = "#403c41", .background = "#403c41" },
+                // status_line:
+                .{ .foreground = "#ffffff", .background = "#403c41" },
+                // status_line_focused:
+                .{ .foreground = "#000000", .background = "#dddddd" },
+                // keyword:
+                .{ .foreground = "#8197bf" },
+                // type:
+                .{ .foreground = "#ffb964" },
+                // constant:
+                .{ .foreground = "#cf6a4c" },
+                // comment:
+                .{ .foreground = "#888888" },
+                // preprocessor:
+                .{ .foreground = "#8fbfdc" },
+                // string:
+                .{ .foreground = "#99ad6a" },
+                // label:
+                .{ .foreground = "#fad07a" },
+                // punctuation:
+                .{ .foreground = "#e8e8d3" },
+                // operator:
+                .{ .foreground = "#8fbfdc" },
+                // function:
+                .{ .foreground = "#fad07a" },
+            },
+        );
+    }
 
     pub fn getFace(self: *const ColorScheme, kind: FaceType) Face {
         return self.faces[@enumToInt(kind)];

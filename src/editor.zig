@@ -310,7 +310,7 @@ pub fn init(allocator: *Allocator) !void {
 
         .key_buffer = std.ArrayList(u8).init(allocator),
 
-        .color_scheme = try ColorScheme.defaultDark(allocator),
+        .color_scheme = try ColorScheme.jellybeansTheme(allocator),
     };
 
     try registerPanelVT(&@import("buffer_panel.zig").VT);
