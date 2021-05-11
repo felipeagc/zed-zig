@@ -12,6 +12,8 @@ pub const MiniBuffer = struct {
     callbacks: Callbacks = .{},
     cursor: usize = 0,
     active: bool = false,
+    options: ArrayList([]const u8),
+    selected_option: usize = 0,
 
     pub const Callback = fn (panel: *editor.Panel, text: []const u8) anyerror!void;
     pub const Callbacks = struct {
@@ -25,14 +27,21 @@ pub const MiniBuffer = struct {
         self.* = MiniBuffer{
             .allocator = allocator,
             .text = ArrayList(u8).init(allocator),
+            .options = ArrayList([]const u8).init(allocator),
         };
         return self;
     }
 
     pub fn deinit(self: *MiniBuffer) void {
+        for (self.options.items) |option| {
+            self.allocator.free(option);
+        }
+        self.options.deinit();
+
         if (self.prompt) |prompt| {
             self.allocator.free(prompt);
         }
+
         self.text.deinit();
         self.allocator.destroy(self);
     }
@@ -106,12 +115,15 @@ pub const MiniBuffer = struct {
     }
 
     pub fn draw(self: *MiniBuffer, rect: renderer.Rect) !void {
+        const color_scheme = editor.getColorScheme();
+
         try renderer.setScissor(rect);
+        renderer.setColor(color_scheme.getFace(.default).background);
+        try renderer.drawRect(rect);
 
         // Only proceed to draw text if minibuffer is active
         if (!self.active) return;
 
-        const color_scheme = editor.getColorScheme();
         const options = editor.getOptions();
         const font = options.main_font;
         const font_size = options.main_font_size;
@@ -166,12 +178,75 @@ pub const MiniBuffer = struct {
             .x = prompt_advance + rect.x + padding + cursor_advance,
             .y = rect.y + padding,
         });
+
+        const compl_height = std.math.min(
+            @intCast(i32, options.minibuffer_completion_item_count),
+            @intCast(i32, self.options.items.len),
+        ) * char_height;
+        const compl_rect = renderer.Rect{
+            .w = rect.w,
+            .h = compl_height,
+            .x = rect.x,
+            .y = rect.y - compl_height,
+        };
+
+        // Draw options
+
+        try renderer.setScissor(compl_rect);
+        renderer.setColor(color_scheme.getFace(.default).background);
+        try renderer.drawRect(compl_rect);
+
+        renderer.setColor(color_scheme.getFace(.default).foreground);
+        var text_y = compl_rect.y;
+        for (self.options.items) |option| {
+            if (self.text.items.len == 0 or 
+                mem.indexOf(u8, option, self.text.items) != null) {
+                _ = try renderer.drawText(
+                    option,
+                    font,
+                    font_size,
+                    compl_rect.x,
+                    text_y,
+                    .{},
+                );
+                text_y += char_height;
+            }
+        }
     }
 
-    pub fn activate(self: *MiniBuffer, prompt: []const u8, callbacks: Callbacks) !void {
+    pub fn activate(
+        self: *MiniBuffer,
+        prompt: []const u8,
+        options: []const []const u8,
+        callbacks: Callbacks,
+    ) !void {
         if (self.prompt) |existing_prompt| {
             self.allocator.free(existing_prompt);
         }
+        for (self.options.items) |option| {
+            self.allocator.free(option);
+        }
+
+        try self.options.resize(options.len);
+        for (self.options.items) |*option, i| {
+            option.* = try self.allocator.dupe(u8, options[i]);
+        }
+
+        std.sort.sort(
+            []const u8,
+            self.options.items,
+            {},
+
+            struct {
+                fn inner(
+                    context: void,
+                    a: []const u8,
+                    b: []const u8,
+                ) bool {
+                    return std.mem.lessThan(u8, a, b);
+                }
+            }.inner,
+        );
 
         self.prompt = try self.allocator.dupe(u8, prompt);
         self.callbacks = callbacks;

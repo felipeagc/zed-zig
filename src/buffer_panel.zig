@@ -1846,16 +1846,24 @@ pub const BufferPanel = struct {
 
     fn normalModeForwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var minibuffer = editor.getMiniBuffer();
-        try minibuffer.activate("/", .{
-            .on_confirm = bufferForwardSearchConfirm,
-        });
+        try minibuffer.activate(
+            "/",
+            &[_][]const u8{},
+            .{
+                .on_confirm = bufferForwardSearchConfirm,
+            },
+        );
     }
 
     fn normalModeBackwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var minibuffer = editor.getMiniBuffer();
-        try minibuffer.activate("?", .{
-            .on_confirm = bufferBackwardSearchConfirm,
-        });
+        try minibuffer.activate(
+            "?",
+            &[_][]const u8{},
+            .{
+                .on_confirm = bufferBackwardSearchConfirm,
+            },
+        );
     }
 
     fn getLeadingWhitespaceCodepointCount(line: []const u8) usize {

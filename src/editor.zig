@@ -7,6 +7,7 @@ const Buffer = @import("buffer.zig").Buffer;
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
 const ColorScheme = @import("highlighter.zig").ColorScheme;
 const regex = @import("regex.zig");
+const util = @import("util.zig");
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
 
@@ -17,6 +18,8 @@ pub const EditorOptions = struct {
     status_line_padding: u32 = 4,
     minibuffer_line_padding: u32 = 4,
     border_size: u32 = 3,
+    minibuffer_completion_item_count: u32 = 5,
+    wild_ignore: []const u8 = "^(zig-cache|\\.git|.*\\.o|.*\\.obj|.*\\.exe|.*\\.bin)",
 };
 
 pub const KeyResult = enum {
@@ -353,9 +356,65 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind(":", struct {
         fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
-            try g_editor.minibuffer.activate(":", .{
-                .on_confirm = commandHandler,
-            });
+            var command_count: usize = 0;
+            command_count += g_editor.global_commands.commands.count();
+            if (panel.vt.command_registry) |panel_command_registry| {
+                command_count += panel_command_registry.commands.count();
+            }
+
+            const options = try g_editor.allocator.alloc([]const u8, command_count);
+            defer g_editor.allocator.free(options);
+
+            var command_index: usize = 0;
+
+            for (g_editor.global_commands.commands.items()) |*entry| {
+                options[command_index] = entry.key;
+                command_index += 1;
+            }
+
+            if (panel.vt.command_registry) |panel_command_registry| {
+                for (panel_command_registry.commands.items()) |*entry| {
+                    options[command_index] = entry.key;
+                    command_index += 1;
+                }
+            }
+
+            try g_editor.minibuffer.activate(
+                ":",
+                options,
+                .{
+                    .on_confirm = commandHandler,
+                },
+            );
+        }
+    }.callback);
+
+    try g_editor.global_keymap.bind("C-p", struct {
+        fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
+            var arena = std.heap.ArenaAllocator.init(g_editor.allocator);
+            defer arena.deinit();
+            const arena_allocator = &arena.allocator;
+
+            var options = std.ArrayList([]const u8).init(arena_allocator);
+            defer options.deinit();
+
+            var ignore_regex = try regex.Regex.init(arena_allocator);
+            try ignore_regex.addPattern(0, g_editor.options.wild_ignore);
+
+            var walker = try util.Walker.init(arena_allocator, ".", ignore_regex);
+            defer walker.deinit();
+
+            while (try walker.next()) |entry| {
+                if (entry.kind != .Directory) {
+                    try options.append(try arena_allocator.dupe(u8, entry.path));
+                }
+            }
+
+            try g_editor.minibuffer.activate(
+                "Find: ",
+                options.items,
+                .{},
+            );
         }
     }.callback);
 
@@ -542,6 +601,54 @@ pub fn draw() !void {
         };
     }
 }
+
+const DirIterator = struct {
+    allocator: *Allocator,
+    stack: std.ArrayList(std.fs.Dir),
+    current_iterator: ?std.fs.Dir.Iterator = null,
+
+    const Entry = struct {
+        path: []const u8,
+        kind: std.fs.File.Kind,
+    };
+
+    fn init(allocator: *Allocator, base_dir: std.fs.Dir) !DirIterator {
+        var stack = std.ArrayList(std.fs.Dir).init(allocator);
+        try stack.append(base_dir);
+        return DirIterator{
+            .allocator = allocator,
+            .stack = stack,
+        };
+    }
+
+    fn deinit(self: *const DirIterator) void {
+        self.stack.deinit();
+    }
+
+    fn next(self: *DirIterator) !?Entry {
+        if (self.current_iterator == null) {
+            if (self.stack.popOrNull()) |dir| {
+                self.current_iterator = dir.iterate();
+            }
+        }
+
+        if (self.current_iterator) |iter| {
+            if (try iter.next()) |entry| {
+                if (entry.kind == null)
+                    return Entry{
+                        .path = entry.name, // TODO: full path
+                        .kind = entry.kind,
+                    };
+            } else {
+                self.current_iterator = null;
+            }
+        }
+
+        if (self.stack.popOrNull()) |dir| {}
+
+        return null;
+    }
+};
 
 pub fn mainLoop() void {
     while (!renderer.shouldClose()) {
