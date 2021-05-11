@@ -7,7 +7,6 @@ const Buffer = @import("buffer.zig").Buffer;
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
 const ColorScheme = @import("highlighter.zig").ColorScheme;
 const regex = @import("regex.zig");
-const util = @import("util.zig");
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
 
@@ -24,6 +23,7 @@ pub const EditorOptions = struct {
 
 pub const KeyResult = enum {
     none,
+    insert,
     submap,
     command,
 };
@@ -154,7 +154,7 @@ fn onKey(key: renderer.Key, mods: u32) void {
             break :blk .none;
         };
 
-        if (result != .command) {
+        if (result == .none or result == .submap) {
             const global_result = g_editor.global_keymap.tryExecute(
                 panel,
                 g_editor.key_buffer.items,
@@ -191,7 +191,9 @@ fn onChar(codepoint: u32) void {
     };
 
     if (maybe_seq) |seq| {
-        if (g_editor.key_buffer.items.len > 0) g_editor.key_buffer.append(' ') catch unreachable;
+        if (g_editor.key_buffer.items.len > 0) {
+            g_editor.key_buffer.append(' ') catch unreachable;
+        }
         g_editor.key_buffer.appendSlice(seq) catch unreachable;
 
         var result = KeyResult.none;
@@ -201,7 +203,7 @@ fn onChar(codepoint: u32) void {
             break :blk .none;
         };
 
-        if (result != .command) {
+        if (result == .none or result == .submap) {
             const global_result = g_editor.global_keymap.tryExecute(
                 panel,
                 g_editor.key_buffer.items,
@@ -389,35 +391,6 @@ pub fn init(allocator: *Allocator) !void {
         }
     }.callback);
 
-    try g_editor.global_keymap.bind("C-p", struct {
-        fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
-            var arena = std.heap.ArenaAllocator.init(g_editor.allocator);
-            defer arena.deinit();
-            const arena_allocator = &arena.allocator;
-
-            var options = std.ArrayList([]const u8).init(arena_allocator);
-            defer options.deinit();
-
-            var ignore_regex = try regex.Regex.init(arena_allocator);
-            try ignore_regex.addPattern(0, g_editor.options.wild_ignore);
-
-            var walker = try util.Walker.init(arena_allocator, ".", ignore_regex);
-            defer walker.deinit();
-
-            while (try walker.next()) |entry| {
-                if (entry.kind != .Directory) {
-                    try options.append(try arena_allocator.dupe(u8, entry.path));
-                }
-            }
-
-            try g_editor.minibuffer.activate(
-                "Find: ",
-                options.items,
-                .{},
-            );
-        }
-    }.callback);
-
     try g_editor.global_keymap.bind("<space> w /", commandNewSplit);
     try g_editor.global_keymap.bind("<space> w d", commandCloseSplit);
 
@@ -448,6 +421,10 @@ pub fn deinit() void {
     regex.deinitLibrary();
 
     renderer.deinit();
+}
+
+pub fn getAllocator() *Allocator {
+    return g_editor.allocator;
 }
 
 pub fn getOptions() *EditorOptions {

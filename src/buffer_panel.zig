@@ -618,7 +618,7 @@ pub const BufferPanel = struct {
                     }
                 }
 
-                return .none;
+                return editor.KeyResult.insert;
             },
         }
     }
@@ -2374,6 +2374,58 @@ pub const BufferPanel = struct {
 
         try command_registry.register("w", commandWriteFile);
         try command_registry.register("e", commandEditFile);
+
+        try normal_key_map.bind("C-p", struct {
+            fn callback(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+                var arena = std.heap.ArenaAllocator.init(editor.getAllocator());
+                defer arena.deinit();
+                const arena_allocator = &arena.allocator;
+
+                var options = std.ArrayList([]const u8).init(arena_allocator);
+                defer options.deinit();
+
+                var ignore_regex = try Regex.init(arena_allocator);
+                try ignore_regex.addPattern(0, editor.getOptions().wild_ignore);
+
+                var walker = try util.Walker.init(arena_allocator, ".", ignore_regex);
+                defer walker.deinit();
+
+                while (try walker.next()) |entry| {
+                    if (entry.kind != .Directory) {
+                        try options.append(try arena_allocator.dupe(u8, entry.path));
+                    }
+                }
+
+                var minibuffer = editor.getMiniBuffer();
+                try minibuffer.activate(
+                    "Find: ",
+                    options.items,
+                    .{},
+                );
+            }
+        }.callback);
+
+        try normal_key_map.bind("C-b", struct {
+            fn callback(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+                var arena = std.heap.ArenaAllocator.init(editor.getAllocator());
+                defer arena.deinit();
+                const arena_allocator = &arena.allocator;
+
+                var options = std.ArrayList([]const u8).init(arena_allocator);
+                defer options.deinit();
+
+                for (g_buffers.items) |buffer| {
+                    try options.append(try arena_allocator.dupe(u8, buffer.name));
+                }
+
+                var minibuffer = editor.getMiniBuffer();
+                try minibuffer.activate(
+                    "Buffer: ",
+                    options.items,
+                    .{},
+                );
+            }
+        }.callback);
     }
 
     fn unregisterVT() void {
