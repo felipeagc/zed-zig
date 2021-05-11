@@ -1847,6 +1847,7 @@ pub const BufferPanel = struct {
     fn normalModeForwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var minibuffer = editor.getMiniBuffer();
         try minibuffer.activate(
+            panel,
             "/",
             &[_][]const u8{},
             .{
@@ -1858,6 +1859,7 @@ pub const BufferPanel = struct {
     fn normalModeBackwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var minibuffer = editor.getMiniBuffer();
         try minibuffer.activate(
+            panel,
             "?",
             &[_][]const u8{},
             .{
@@ -2398,6 +2400,7 @@ pub const BufferPanel = struct {
 
                 var minibuffer = editor.getMiniBuffer();
                 try minibuffer.activate(
+                    panel,
                     "Find: ",
                     options.items,
                     .{},
@@ -2420,6 +2423,7 @@ pub const BufferPanel = struct {
 
                 var minibuffer = editor.getMiniBuffer();
                 try minibuffer.activate(
+                    panel,
                     "Buffer: ",
                     options.items,
                     .{},

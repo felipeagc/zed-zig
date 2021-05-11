@@ -129,7 +129,7 @@ fn onKey(key: renderer.Key, mods: u32) void {
     }
 
     if (g_editor.minibuffer.active) {
-        _ = g_editor.minibuffer.onKey(panel, key, mods) catch |err| {
+        _ = g_editor.minibuffer.onKey(key, mods) catch |err| {
             std.log.err("minibuffer onKey error: {}", .{err});
         };
         return;
@@ -176,7 +176,7 @@ fn onChar(codepoint: u32) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
 
     if (g_editor.minibuffer.active) {
-        _ = g_editor.minibuffer.onChar(panel, codepoint) catch |err| {
+        _ = g_editor.minibuffer.onChar(codepoint) catch |err| {
             std.log.err("minibuffer onChar error: {}", .{err});
         };
         return;
@@ -382,6 +382,7 @@ pub fn init(allocator: *Allocator) !void {
             }
 
             try g_editor.minibuffer.activate(
+                panel,
                 ":",
                 options,
                 .{

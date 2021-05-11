@@ -13,7 +13,9 @@ pub const MiniBuffer = struct {
     cursor: usize = 0,
     active: bool = false,
     options: ArrayList([]const u8),
+    filtered_option_indices: ArrayList(usize),
     selected_option: usize = 0,
+    panel: ?*editor.Panel = null,
 
     pub const Callback = fn (panel: *editor.Panel, text: []const u8) anyerror!void;
     pub const Callbacks = struct {
@@ -28,6 +30,7 @@ pub const MiniBuffer = struct {
             .allocator = allocator,
             .text = ArrayList(u8).init(allocator),
             .options = ArrayList([]const u8).init(allocator),
+            .filtered_option_indices = ArrayList(usize).init(allocator),
         };
         return self;
     }
@@ -37,6 +40,7 @@ pub const MiniBuffer = struct {
             self.allocator.free(option);
         }
         self.options.deinit();
+        self.filtered_option_indices.deinit();
 
         if (self.prompt) |prompt| {
             self.allocator.free(prompt);
@@ -46,7 +50,11 @@ pub const MiniBuffer = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn insert(self: *MiniBuffer, text: []const u8, column: usize) !void {
+    pub fn insert(
+        self: *MiniBuffer,
+        text: []const u8,
+        column: usize,
+    ) !void {
         if (text.len == 0) return;
 
         var byte_pos: usize = 0;
@@ -65,7 +73,11 @@ pub const MiniBuffer = struct {
         try self.text.insertSlice(byte_pos, text);
     }
 
-    pub fn delete(self: *MiniBuffer, column: usize, codepoint_length: usize) !void {
+    pub fn delete(
+        self: *MiniBuffer,
+        column: usize,
+        codepoint_length: usize,
+    ) !void {
         if (codepoint_length == 0) return;
 
         var byte_pos: usize = 0;
@@ -199,8 +211,9 @@ pub const MiniBuffer = struct {
         renderer.setColor(color_scheme.getFace(.default).foreground);
         var text_y = compl_rect.y;
         for (self.options.items) |option| {
-            if (self.text.items.len == 0 or 
-                mem.indexOf(u8, option, self.text.items) != null) {
+            if (self.text.items.len == 0 or
+                mem.indexOf(u8, option, self.text.items) != null)
+            {
                 _ = try renderer.drawText(
                     option,
                     font,
@@ -216,6 +229,7 @@ pub const MiniBuffer = struct {
 
     pub fn activate(
         self: *MiniBuffer,
+        panel: ?*editor.Panel,
         prompt: []const u8,
         options: []const []const u8,
         callbacks: Callbacks,
@@ -236,16 +250,11 @@ pub const MiniBuffer = struct {
             []const u8,
             self.options.items,
             {},
-
             struct {
-                fn inner(
-                    context: void,
-                    a: []const u8,
-                    b: []const u8,
-                ) bool {
+                fn cmp(context: void, a: []const u8, b: []const u8) bool {
                     return std.mem.lessThan(u8, a, b);
                 }
-            }.inner,
+            }.cmp,
         );
 
         self.prompt = try self.allocator.dupe(u8, prompt);
@@ -253,6 +262,8 @@ pub const MiniBuffer = struct {
 
         self.resetContent();
         self.active = true;
+
+        try self.onChange();
     }
 
     pub fn deactivate(self: *MiniBuffer) void {
@@ -260,20 +271,43 @@ pub const MiniBuffer = struct {
         self.resetContent();
     }
 
-    pub fn onChar(self: *MiniBuffer, panel: *editor.Panel, codepoint: u32) anyerror!bool {
+    fn onChange(self: *MiniBuffer) !void {
+        self.filtered_option_indices.shrinkRetainingCapacity(0);
+
+        for (self.options.items) |option, i| {
+            if (self.text.items.len == 0 or
+                mem.indexOf(u8, option, self.text.items) != null)
+            {
+                try self.filtered_option_indices.append(i);
+            }
+        }
+
+        if (self.callbacks.on_change) |on_change| {
+            if (self.panel) |panel| {
+                try on_change(panel, self.text.items);
+            }
+        }
+    }
+
+    pub fn onChar(
+        self: *MiniBuffer,
+        codepoint: u32,
+    ) anyerror!bool {
         var text = [4]u8{ 0, 0, 0, 0 };
         var text_bytes = try std.unicode.utf8Encode(@intCast(u21, codepoint), &text);
         try self.insert(text[0..text_bytes], self.cursor);
         self.cursor += 1;
 
-        if (self.callbacks.on_change) |on_change| {
-            try on_change(panel, self.text.items);
-        }
+        try self.onChange();
 
         return true;
     }
 
-    pub fn onKey(self: *MiniBuffer, panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!bool {
+    pub fn onKey(
+        self: *MiniBuffer,
+        key: renderer.Key,
+        mods: u32,
+    ) anyerror!bool {
         const allocator = self.allocator;
         const content = try allocator.dupe(u8, self.text.items);
         defer allocator.free(content);
@@ -284,7 +318,9 @@ pub const MiniBuffer = struct {
                 self.active = false;
 
                 if (self.callbacks.on_cancel) |on_cancel| {
-                    try on_cancel(panel, content);
+                    if (self.panel) |panel| {
+                        try on_cancel(panel, content);
+                    }
                 }
                 break :blk true;
             },
@@ -293,7 +329,9 @@ pub const MiniBuffer = struct {
                 self.active = false;
 
                 if (self.callbacks.on_confirm) |on_confirm| {
-                    try on_confirm(panel, content);
+                    if (self.panel) |panel| {
+                        try on_confirm(panel, content);
+                    }
                 }
                 break :blk true;
             },
@@ -302,9 +340,7 @@ pub const MiniBuffer = struct {
                     self.cursor -= 1;
                     try self.delete(self.cursor, 1);
 
-                    if (self.callbacks.on_change) |on_change| {
-                        try on_change(panel, content);
-                    }
+                    try self.onChange();
                 }
                 break :blk true;
             },
@@ -313,9 +349,7 @@ pub const MiniBuffer = struct {
                 if (self.cursor < text_length) {
                     try self.delete(self.cursor, 1);
 
-                    if (self.callbacks.on_change) |on_change| {
-                        try on_change(panel, content);
-                    }
+                    try self.onChange();
                 }
                 break :blk true;
             },
@@ -325,6 +359,10 @@ pub const MiniBuffer = struct {
             },
             .@"<right>" => blk: {
                 if ((self.cursor + 1) <= self.text.items.len) self.cursor += 1;
+                break :blk true;
+            },
+            .@"<up>" => blk: {
+                // if ((self.selected_option + 1) <= self.options.len) self.cursor += 1;
                 break :blk true;
             },
             else => false,
