@@ -6,7 +6,12 @@ const MiniBuffer = @import("minibuffer.zig").MiniBuffer;
 const Buffer = @import("buffer.zig").Buffer;
 const BufferPanel = @import("buffer_panel.zig").BufferPanel;
 const ColorScheme = @import("highlighter.zig").ColorScheme;
+const FileType = @import("filetype.zig").FileType;
 const regex = @import("regex.zig");
+const util = @import("util.zig");
+const mem = std.mem;
+
+const SCRATCH_BUFFER_NAME = "** scratch **";
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
 
@@ -44,6 +49,10 @@ const Editor = struct {
 
     key_buffer: std.ArrayList(u8),
     color_scheme: ColorScheme,
+
+    filetypes: std.StringArrayHashMap(*FileType),
+    filetype_extensions: std.StringArrayHashMap(*FileType),
+    buffers: std.ArrayList(*Buffer),
 };
 
 pub const PanelVT = struct {
@@ -257,7 +266,7 @@ fn commandNewSplit(panel: *Panel, args: [][]const u8) anyerror!void {
         g_editor.selected_panel + 1,
         try BufferPanel.init(
             g_editor.allocator,
-            try BufferPanel.getScratchBuffer(g_editor.allocator),
+            try getScratchBuffer(),
         ),
     );
 }
@@ -303,6 +312,10 @@ pub fn init(allocator: *Allocator) !void {
         .key_buffer = std.ArrayList(u8).init(allocator),
 
         .color_scheme = try ColorScheme.jellybeansTheme(allocator),
+
+        .buffers = std.ArrayList(*Buffer).init(allocator),
+        .filetypes = std.StringArrayHashMap(*FileType).init(allocator),
+        .filetype_extensions = std.StringArrayHashMap(*FileType).init(allocator),
     };
 
     try registerPanelVT(&@import("buffer_panel.zig").VT);
@@ -384,6 +397,24 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_commands.register("vsp", commandNewSplit);
     try g_editor.global_commands.register("q", commandCloseSplit);
+
+    try registerFileType(try FileType.init(
+        allocator,
+        "default",
+        @embedFile("../filetypes/default.json"),
+    ));
+
+    try registerFileType(try FileType.init(
+        allocator,
+        "c",
+        @embedFile("../filetypes/c.json"),
+    ));
+
+    try registerFileType(try FileType.init(
+        allocator,
+        "zig",
+        @embedFile("../filetypes/zig.json"),
+    ));
 }
 
 pub fn deinit() void {
@@ -396,6 +427,21 @@ pub fn deinit() void {
             unregister_vt();
         }
     }
+
+    for (g_editor.buffers.items) |buffer| {
+        buffer.deinit();
+    }
+
+    {
+        var iter = g_editor.filetypes.iterator();
+        while (iter.next()) |entry| {
+            entry.value.deinit();
+        }
+    }
+
+    g_editor.filetypes.deinit();
+    g_editor.filetype_extensions.deinit();
+    g_editor.buffers.deinit();
 
     g_editor.key_buffer.deinit();
     g_editor.minibuffer.deinit();
@@ -427,6 +473,59 @@ pub fn getColorScheme() *ColorScheme {
     return &g_editor.color_scheme;
 }
 
+pub fn getBuffers() []*Buffer {
+    return g_editor.buffers.items;
+}
+
+pub fn addBufferFromFile(path: []const u8) !*Buffer {
+    const allocator = g_editor.allocator;
+
+    const actual_path = try util.normalizePath(allocator, path);
+    defer allocator.free(actual_path);
+
+    for (g_editor.buffers.items) |buffer| {
+        if (buffer.absolute_path) |buffer_path| {
+            if (mem.eql(u8, buffer_path, actual_path)) {
+                return buffer;
+            }
+        }
+    }
+
+    var ext = std.fs.path.extension(path);
+    if (ext.len > 0 and ext[0] == '.') ext = ext[1..]; // Remove '.'
+    const filetype = g_editor.filetype_extensions.get(ext) orelse getFileType("default");
+
+    const buffer = try Buffer.initFromFile(allocator, .{
+        .path = actual_path,
+        .filetype = filetype,
+    });
+    try g_editor.buffers.append(buffer);
+    return buffer;
+}
+
+pub fn getScratchBuffer() !*Buffer {
+    const allocator = g_editor.allocator;
+
+    for (g_editor.buffers.items) |buffer| {
+        if (mem.eql(u8, buffer.name, SCRATCH_BUFFER_NAME)) {
+            return buffer;
+        }
+    }
+
+    const scratch_buffer = try Buffer.initWithContent(
+        allocator,
+        "",
+        .{
+            .name = SCRATCH_BUFFER_NAME,
+            .filetype = getFileType("default"),
+        },
+    );
+
+    try g_editor.buffers.append(scratch_buffer);
+
+    return scratch_buffer;
+}
+
 pub fn addPanel(panel: *Panel) !void {
     try g_editor.panels.append(panel);
 }
@@ -446,6 +545,26 @@ pub fn isPanelSelected(panel: *Panel) bool {
         if (panel == other_panel) return i == g_editor.selected_panel;
     }
     return false;
+}
+
+pub fn registerFileType(filetype: *FileType) !void {
+    if (g_editor.filetypes.get(filetype.name)) |existing_filetype| {
+        existing_filetype.deinit();
+    }
+
+    try g_editor.filetypes.put(filetype.name, filetype);
+
+    for (filetype.extensions) |ext| {
+        try g_editor.filetype_extensions.put(ext, filetype);
+    }
+}
+
+pub fn getFileType(name: []const u8) *FileType {
+    if (g_editor.filetypes.get(name)) |filetype| {
+        return filetype;
+    }
+
+    return g_editor.filetypes.get("default") orelse unreachable;
 }
 
 pub fn draw() !void {
@@ -621,9 +740,7 @@ pub fn mainLoop() void {
         defer renderer.endFrame() catch unreachable;
 
         if (g_editor.panels.items.len == 0) {
-            const scratch_buffer = BufferPanel.getScratchBuffer(
-                g_editor.allocator,
-            ) catch unreachable;
+            const scratch_buffer = getScratchBuffer() catch unreachable;
 
             const panel = BufferPanel.init(
                 g_editor.allocator,

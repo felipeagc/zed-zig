@@ -28,8 +28,6 @@ const CharClass = enum {
     other,
 };
 
-const SCRATCH_BUFFER_NAME = "** scratch **";
-
 fn codepointToCharClass(codepoint: u32) CharClass {
     return if (codepoint > 0x07f)
         CharClass.alphanum
@@ -49,9 +47,6 @@ fn positionIsBetween(pos: Position, start: Position, end: Position) bool {
     return is_after_start and is_before_end;
 }
 
-var g_filetypes: std.StringArrayHashMap(*FileType) = undefined;
-var g_filetype_extensions: std.StringArrayHashMap(*FileType) = undefined;
-var g_buffers: std.ArrayList(*Buffer) = undefined;
 var command_registry: CommandRegistry = undefined;
 var normal_key_map: KeyMap = undefined;
 var insert_key_map: KeyMap = undefined;
@@ -109,50 +104,6 @@ pub const BufferPanel = struct {
         self.scroll_x = .{};
         self.scroll_y = .{};
         self.mode = .normal;
-    }
-
-    pub fn addBufferFromFile(allocator: *Allocator, path: []const u8) !*Buffer {
-        const actual_path = try util.normalizePath(allocator, path);
-        defer allocator.free(actual_path);
-
-        for (g_buffers.items) |buffer| {
-            if (buffer.absolute_path) |buffer_path| {
-                if (mem.eql(u8, buffer_path, actual_path)) {
-                    return buffer;
-                }
-            }
-        }
-
-        var ext = std.fs.path.extension(path);
-        if (ext.len > 0 and ext[0] == '.') ext = ext[1..]; // Remove '.'
-        const filetype = g_filetype_extensions.get(ext) orelse getFileType("default");
-
-        const buffer = try Buffer.initFromFile(allocator, .{
-            .path = actual_path,
-            .filetype = filetype,
-        });
-        try g_buffers.append(buffer);
-        return buffer;
-    }
-
-    pub fn registerFileType(filetype: *FileType) !void {
-        if (g_filetypes.get(filetype.name)) |existing_filetype| {
-            existing_filetype.deinit();
-        }
-
-        try g_filetypes.put(filetype.name, filetype);
-
-        for (filetype.extensions) |ext| {
-            try g_filetype_extensions.put(ext, filetype);
-        }
-    }
-
-    pub fn getFileType(name: []const u8) *FileType {
-        if (g_filetypes.get(name)) |filetype| {
-            return filetype;
-        }
-
-        return g_filetypes.get("default") orelse unreachable;
     }
 
     fn scrollToCursor(self: *BufferPanel) void {
@@ -573,15 +524,15 @@ pub const BufferPanel = struct {
                 if (!skip_insert) {
                     if (is_opener) {
                         try self.buffer.insert(
-                            used_bracket.?.close,
                             self.cursor.line,
                             self.cursor.column,
+                            used_bracket.?.close,
                         );
                     }
                     try self.buffer.insert(
-                        inserted_buf,
                         self.cursor.line,
                         self.cursor.column,
+                        inserted_buf,
                     );
                 }
 
@@ -793,7 +744,7 @@ pub const BufferPanel = struct {
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
         try self.buffer.delete(line_index, line_length, 1); // delete newline
-        try self.buffer.insert(" ", line_index, line_length); // insert space
+        try self.buffer.insert(line_index, line_length, " "); // insert space
 
         self.cursor.column = line_length;
         try self.fixupCursor();
@@ -860,7 +811,7 @@ pub const BufferPanel = struct {
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
 
-        try self.buffer.insert("\n", self.cursor.line, line_length);
+        try self.buffer.insert(self.cursor.line, line_length, "\n");
 
         self.mode = .insert;
         self.cursor.column = 0;
@@ -881,7 +832,7 @@ pub const BufferPanel = struct {
 
         self.beginCheckpoint();
 
-        try self.buffer.insert("\n", self.cursor.line, 0);
+        try self.buffer.insert(self.cursor.line, 0, "\n");
 
         self.mode = .insert;
         self.cursor.column = 0;
@@ -1019,7 +970,7 @@ pub const BufferPanel = struct {
 
         const filetype = self.buffer.filetype;
 
-        try self.buffer.insert("\n", self.cursor.line, self.cursor.column);
+        try self.buffer.insert(self.cursor.line, self.cursor.column, "\n");
         try insertModeMoveRight(panel, &[_][]const u8{});
         try self.fixupCursor();
 
@@ -1031,7 +982,7 @@ pub const BufferPanel = struct {
                 mem.startsWith(u8, new_line_content, bracket.close))
             {
                 found_bracket = true;
-                try self.buffer.insert("\n", self.cursor.line, self.cursor.column);
+                try self.buffer.insert(self.cursor.line, self.cursor.column, "\n");
                 try self.autoIndentSingleLine(self.cursor.line + 1);
                 break;
             }
@@ -1053,11 +1004,11 @@ pub const BufferPanel = struct {
 
             var i: u32 = 0;
             while (i < spaces) : (i += 1) {
-                try self.buffer.insert(" ", self.cursor.line, self.cursor.column);
+                try self.buffer.insert(self.cursor.line, self.cursor.column, " ");
                 try insertModeMoveRight(panel, &[_][]const u8{});
             }
         } else {
-            try self.buffer.insert("\t", self.cursor.line, self.cursor.column);
+            try self.buffer.insert(self.cursor.line, self.cursor.column, "\t");
             try insertModeMoveRight(panel, &[_][]const u8{});
         }
     }
@@ -1079,19 +1030,19 @@ pub const BufferPanel = struct {
         if (clipboard_content[clipboard_content.len - 1] == '\n') {
             const line = try self.buffer.getLine(self.cursor.line);
             const line_length = try std.unicode.utf8CountCodepoints(line);
-            try self.buffer.insert("\n", self.cursor.line, line_length);
+            try self.buffer.insert(self.cursor.line, line_length, "\n");
             try self.buffer.insert(
-                clipboard_content[0 .. clipboard_content.len - 1],
                 self.cursor.line + 1,
                 0,
+                clipboard_content[0 .. clipboard_content.len - 1],
             );
             self.cursor.line += 1;
             self.cursor.column = 0;
         } else {
             try self.buffer.insert(
-                clipboard_content,
                 self.cursor.line,
                 self.cursor.column + 1,
+                clipboard_content,
             );
             self.cursor.column += content_codepoint_count;
         }
@@ -1114,10 +1065,10 @@ pub const BufferPanel = struct {
         if (content_codepoint_count == 0) return;
 
         if (clipboard_content[clipboard_content.len - 1] == '\n') {
-            try self.buffer.insert(clipboard_content, self.cursor.line, 0);
+            try self.buffer.insert(self.cursor.line, 0, clipboard_content);
             self.cursor.column = 0;
         } else {
-            try self.buffer.insert(clipboard_content, self.cursor.line, self.cursor.column);
+            try self.buffer.insert(self.cursor.line, self.cursor.column, clipboard_content);
             self.cursor.column += (content_codepoint_count - 1);
         }
 
@@ -1456,11 +1407,9 @@ pub const BufferPanel = struct {
         self.beginCheckpoint();
         defer self.endCheckpoint();
 
-        const needle_utf8 = args[0];
-
         const cursor = try self.getFixedCursorPos();
         try self.buffer.delete(cursor.line, cursor.column, 1);
-        try self.buffer.insert(needle_utf8, cursor.line, cursor.column);
+        try self.buffer.insert(cursor.line, cursor.column, args[0]);
     }
 
     fn visualModeDelete(panel: *editor.Panel, args: [][]const u8) anyerror!void {
@@ -1569,7 +1518,7 @@ pub const BufferPanel = struct {
         try renderer.setClipboardString(content);
 
         try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
-        try self.buffer.insert(pasted_content, start_pos.line, start_pos.column);
+        try self.buffer.insert(start_pos.line, start_pos.column, pasted_content);
 
         self.cursor = start_pos;
 
@@ -1695,7 +1644,7 @@ pub const BufferPanel = struct {
         try renderer.setClipboardString(content);
 
         try self.buffer.delete(start_pos.line, start_pos.column, distance + 1);
-        try self.buffer.insert(pasted_content, start_pos.line, start_pos.column);
+        try self.buffer.insert(start_pos.line, start_pos.column, pasted_content);
 
         self.cursor = start_pos;
 
@@ -1926,7 +1875,7 @@ pub const BufferPanel = struct {
 
         var i: usize = 0;
         while (i < indent_count) : (i += 1) {
-            try self.buffer.insert(&[_]u8{indent_char}, line_index, 0);
+            try self.buffer.insert(line_index, 0, &[_]u8{indent_char});
         }
     }
 
@@ -2218,7 +2167,7 @@ pub const BufferPanel = struct {
             defer self.endCheckpoint();
 
             try self.buffer.delete(0, 0, content.len);
-            try self.buffer.insert(formatted_content, 0, 0);
+            try self.buffer.insert(0, 0, formatted_content);
         }
     }
 
@@ -2240,7 +2189,7 @@ pub const BufferPanel = struct {
 
         const path = args[0];
 
-        if (BufferPanel.addBufferFromFile(self.allocator, path)) |new_buffer| {
+        if (editor.addBufferFromFile(path)) |new_buffer| {
             self.buffer = new_buffer;
             self.resetView();
         } else |err| {
@@ -2249,32 +2198,11 @@ pub const BufferPanel = struct {
     }
 
     fn registerVT(allocator: *Allocator) anyerror!void {
-        g_buffers = std.ArrayList(*Buffer).init(allocator);
-        g_filetypes = std.StringArrayHashMap(*FileType).init(allocator);
-        g_filetype_extensions = std.StringArrayHashMap(*FileType).init(allocator);
         command_registry = CommandRegistry.init(allocator);
         normal_key_map = try KeyMap.init(allocator);
         insert_key_map = try KeyMap.init(allocator);
         visual_key_map = try KeyMap.init(allocator);
         visual_line_key_map = try KeyMap.init(allocator);
-
-        try registerFileType(try FileType.init(
-            allocator,
-            "default",
-            @embedFile("../filetypes/default.json"),
-        ));
-
-        try registerFileType(try FileType.init(
-            allocator,
-            "c",
-            @embedFile("../filetypes/c.json"),
-        ));
-
-        try registerFileType(try FileType.init(
-            allocator,
-            "zig",
-            @embedFile("../filetypes/zig.json"),
-        ));
 
         const normal_key_maps = [_]*KeyMap{
             &normal_key_map,
@@ -2405,7 +2333,8 @@ pub const BufferPanel = struct {
                 var options = std.ArrayList([]const u8).init(arena_allocator);
                 defer options.deinit();
 
-                for (g_buffers.items) |buffer| {
+                const buffers = editor.getBuffers();
+                for (buffers) |buffer| {
                     try options.append(try arena_allocator.dupe(u8, buffer.name));
                 }
 
@@ -2421,46 +2350,11 @@ pub const BufferPanel = struct {
     }
 
     fn unregisterVT() void {
-        for (g_buffers.items) |buffer| {
-            buffer.deinit();
-        }
-
-        {
-            var iter = g_filetypes.iterator();
-            while (iter.next()) |entry| {
-                entry.value.deinit();
-            }
-        }
-
         visual_line_key_map.deinit();
         visual_key_map.deinit();
         insert_key_map.deinit();
         normal_key_map.deinit();
         command_registry.deinit();
-        g_filetypes.deinit();
-        g_filetype_extensions.deinit();
-        g_buffers.deinit();
-    }
-
-    pub fn getScratchBuffer(allocator: *Allocator) !*Buffer {
-        for (g_buffers.items) |buffer| {
-            if (mem.eql(u8, buffer.name, SCRATCH_BUFFER_NAME)) {
-                return buffer;
-            }
-        }
-
-        const scratch_buffer = try Buffer.initWithContent(
-            allocator,
-            "",
-            .{
-                .name = SCRATCH_BUFFER_NAME,
-                .filetype = getFileType("default"),
-            },
-        );
-
-        try g_buffers.append(scratch_buffer);
-
-        return scratch_buffer;
     }
 };
 

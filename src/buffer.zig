@@ -229,9 +229,9 @@ pub const Buffer = struct {
 
     fn insertInternal(
         self: *@This(),
-        text: []const u8,
         line_index: usize,
         column_index: usize,
+        text: []const u8,
         comptime options: TextOpOptions,
     ) !void {
         if (text.len == 0) return;
@@ -302,14 +302,14 @@ pub const Buffer = struct {
 
     pub fn insert(
         self: *@This(),
-        text: []const u8,
         line_index: usize,
         column_index: usize,
+        text: []const u8,
     ) !void {
         return self.insertInternal(
-            text,
             line_index,
             column_index,
+            text,
             .{ .save_history = true },
         );
     }
@@ -589,9 +589,9 @@ pub const Buffer = struct {
             },
             .delete => {
                 try self.insertInternal(
-                    op.delete.text,
                     op.delete.line,
                     op.delete.column,
+                    op.delete.text,
                     .{ .save_history = false },
                 );
             },
@@ -620,9 +620,9 @@ pub const Buffer = struct {
         switch (op) {
             .insert => {
                 try self.insertInternal(
-                    op.insert.text,
                     op.insert.line,
                     op.insert.column,
+                    op.insert.text,
                     .{ .save_history = false },
                 );
             },

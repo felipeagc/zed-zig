@@ -39,7 +39,7 @@ pub fn main() anyerror!void {
 
     if (options.positionals.len > 0) {
         for (options.positionals) |path| {
-            const buffer = BufferPanel.addBufferFromFile(allocator, path) catch |err| {
+            const buffer = editor.addBufferFromFile(path) catch |err| {
                 std.log.err("Failed to open buffer: \"{s}\": {}", .{ path, err });
                 continue;
             };
