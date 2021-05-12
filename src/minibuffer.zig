@@ -17,11 +17,10 @@ pub const MiniBuffer = struct {
     selected_option: usize = 0,
     panel: ?*editor.Panel = null,
 
-    pub const Callback = fn (panel: *editor.Panel, text: []const u8) anyerror!void;
     pub const Callbacks = struct {
-        on_change: ?Callback = null,
-        on_confirm: ?Callback = null,
-        on_cancel: ?Callback = null,
+        on_change: ?editor.Command = null,
+        on_confirm: ?editor.Command= null,
+        on_cancel: ?editor.Command = null,
     };
 
     pub fn init(allocator: *Allocator) !*MiniBuffer {
@@ -298,7 +297,7 @@ pub const MiniBuffer = struct {
 
         if (self.callbacks.on_change) |on_change| {
             if (self.panel) |panel| {
-                try on_change(panel, self.text.items);
+                try on_change(panel, &[_][]const u8{self.text.items});
             }
         }
     }
@@ -323,7 +322,18 @@ pub const MiniBuffer = struct {
         mods: u32,
     ) anyerror!bool {
         const allocator = self.allocator;
-        const content = try allocator.dupe(u8, self.text.items);
+
+        const content_to_copy = if (self.options.items.len > 0 and
+            self.filtered_option_indices.items.len > 0 and
+            self.selected_option < self.filtered_option_indices.items.len and
+            self.filtered_option_indices.items[self.selected_option] < self.options.items.len)
+        blk: {
+            break :blk self.options.items[self.filtered_option_indices.items[self.selected_option]];
+        } else blk: {
+            break :blk self.text.items;
+        };
+
+        const content = try allocator.dupe(u8, content_to_copy);
         defer allocator.free(content);
 
         return switch (key) {
@@ -333,7 +343,7 @@ pub const MiniBuffer = struct {
 
                 if (self.callbacks.on_cancel) |on_cancel| {
                     if (self.panel) |panel| {
-                        try on_cancel(panel, content);
+                        try on_cancel(panel, &[_][]const u8 {content});
                     }
                 }
                 break :blk true;
@@ -344,7 +354,7 @@ pub const MiniBuffer = struct {
 
                 if (self.callbacks.on_confirm) |on_confirm| {
                     if (self.panel) |panel| {
-                        try on_confirm(panel, content);
+                        try on_confirm(panel, &[_][]const u8 {content});
                     }
                 }
                 break :blk true;

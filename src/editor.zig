@@ -234,7 +234,10 @@ fn onScroll(dx: f64, dy: f64) void {
     }
 }
 
-fn commandHandler(panel: *Panel, command_string: []const u8) anyerror!void {
+fn executeCommand(panel: *Panel, args: [][]const u8) anyerror!void {
+    if (args.len != 1) return error.InvalidCommandArgs;
+    const command_string = args[0];
+
     var parts = std.ArrayList([]const u8).init(g_editor.allocator);
     defer parts.deinit();
 
@@ -246,15 +249,15 @@ fn commandHandler(panel: *Panel, command_string: []const u8) anyerror!void {
     if (parts.items.len == 0) return;
 
     const command_name = parts.items[0];
-    const args = parts.items[1..];
+    const cmd_args = parts.items[1..];
 
     if (g_editor.global_commands.get(command_name)) |command| {
-        command(panel, args) catch |err| {
+        command(panel, cmd_args) catch |err| {
             std.log.err("error executing command: {}", .{err});
         };
     } else if (panel.vt.command_registry) |panel_command_registry| {
         if (panel_command_registry.get(command_name)) |command| {
-            command(panel, args) catch |err| {
+            command(panel, cmd_args) catch |err| {
                 std.log.err("error executing command: {}", .{err});
             };
         }
@@ -386,7 +389,7 @@ pub fn init(allocator: *Allocator) !void {
                 ":",
                 options,
                 .{
-                    .on_confirm = commandHandler,
+                    .on_confirm = executeCommand,
                 },
             );
         }

@@ -1741,7 +1741,10 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn bufferForwardSearchConfirm(panel: *editor.Panel, text: []const u8) anyerror!void {
+    fn bufferForwardSearchConfirm(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        if (args.len != 1) return error.InvalidCommandArgs;
+        const text = args[0];
+
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         var regex = try Regex.init(self.allocator);
@@ -1761,7 +1764,10 @@ pub const BufferPanel = struct {
         try gotoNextSearchMatch(panel, &[_][]const u8{});
     }
 
-    fn bufferBackwardSearchConfirm(panel: *editor.Panel, text: []const u8) anyerror!void {
+    fn bufferBackwardSearchConfirm(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+        if (args.len != 1) return error.InvalidCommandArgs;
+        const text = args[0];
+
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
         var regex = try Regex.init(self.allocator);
@@ -2317,9 +2323,11 @@ pub const BufferPanel = struct {
                 var minibuffer = editor.getMiniBuffer();
                 try minibuffer.activate(
                     panel,
-                    "Find: ",
+                    "Find file: ",
                     options.items,
-                    .{},
+                    .{
+                        .on_confirm = commandEditFile,
+                    },
                 );
             }
         }.callback);
