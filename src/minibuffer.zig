@@ -147,7 +147,7 @@ pub const MiniBuffer = struct {
 
         var cursor_advance: i32 = 0;
 
-        var iter = std.unicode.Utf8View.initUnchecked(self.text.items).iterator();
+        var iter = (try std.unicode.Utf8View.init(self.text.items)).iterator();
         var codepoint_index: usize = 0;
         while (iter.nextCodepoint()) |codepoint| {
             if (codepoint_index == self.cursor) {
@@ -191,10 +191,11 @@ pub const MiniBuffer = struct {
             .y = rect.y + padding,
         });
 
-        const compl_height = std.math.min(
+        const compl_display_item_count = std.math.min(
             @intCast(i32, options.minibuffer_completion_item_count),
             @intCast(i32, self.options.items.len),
-        ) * char_height;
+        );
+        const compl_height = compl_display_item_count * char_height;
         const compl_rect = renderer.Rect{
             .w = rect.w,
             .h = compl_height,
@@ -202,28 +203,37 @@ pub const MiniBuffer = struct {
             .y = rect.y - compl_height,
         };
 
-        // Draw options
+        // Draw completion options
 
         try renderer.setScissor(compl_rect);
+
         renderer.setColor(color_scheme.getFace(.default).background);
         try renderer.drawRect(compl_rect);
 
-        renderer.setColor(color_scheme.getFace(.default).foreground);
-        var text_y = compl_rect.y;
-        for (self.options.items) |option| {
-            if (self.text.items.len == 0 or
-                mem.indexOf(u8, option, self.text.items) != null)
-            {
-                _ = try renderer.drawText(
-                    option,
-                    font,
-                    font_size,
-                    compl_rect.x,
-                    text_y,
-                    .{},
-                );
-                text_y += char_height;
+        var text_y = compl_rect.y + compl_rect.h;
+        for (self.filtered_option_indices.items) |option_index, i| {
+            const option = self.options.items[option_index];
+            text_y -= char_height;
+
+            if (self.selected_option == i) {
+                renderer.setColor(color_scheme.getFace(.border).background);
+                try renderer.drawRect(.{
+                    .w = compl_rect.w,
+                    .h = char_height,
+                    .x = compl_rect.x,
+                    .y = text_y,
+                });
             }
+
+            renderer.setColor(color_scheme.getFace(.default).foreground);
+            _ = try renderer.drawText(
+                option,
+                font,
+                font_size,
+                compl_rect.x,
+                text_y,
+                .{},
+            );
         }
     }
 
@@ -257,6 +267,8 @@ pub const MiniBuffer = struct {
             }.cmp,
         );
 
+        self.panel = panel;
+
         self.prompt = try self.allocator.dupe(u8, prompt);
         self.callbacks = callbacks;
 
@@ -272,6 +284,8 @@ pub const MiniBuffer = struct {
     }
 
     fn onChange(self: *MiniBuffer) !void {
+        self.selected_option = 0;
+
         self.filtered_option_indices.shrinkRetainingCapacity(0);
 
         for (self.options.items) |option, i| {
@@ -362,7 +376,15 @@ pub const MiniBuffer = struct {
                 break :blk true;
             },
             .@"<up>" => blk: {
-                // if ((self.selected_option + 1) <= self.options.len) self.cursor += 1;
+                if ((self.selected_option + 1) < self.filtered_option_indices.items.len) {
+                    self.selected_option += 1;
+                }
+                break :blk true;
+            },
+            .@"<down>" => blk: {
+                if (self.selected_option > 0) {
+                    self.selected_option -= 1;
+                }
                 break :blk true;
             },
             else => false,
