@@ -63,9 +63,9 @@ pub const VT = editor.PanelVT{
 
     .draw = BufferPanel.draw,
     .get_status_line = BufferPanel.getStatusLine,
+    .get_key_map = BufferPanel.getKeyMap,
     .deinit = BufferPanel.deinit,
 
-    .on_key = BufferPanel.onKey,
     .on_char = BufferPanel.onChar,
     .on_scroll = BufferPanel.onScroll,
 
@@ -516,36 +516,24 @@ pub const BufferPanel = struct {
         self.allocator.destroy(self);
     }
 
-    fn onKey(panel: *editor.Panel, key: renderer.Key, mods: u32) anyerror!editor.KeyResult {
+    fn getKeyMap(panel: *editor.Panel) *KeyMap {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
-        var map = switch (self.mode) {
-            .normal => normal_key_map,
-            .insert => insert_key_map,
-            .visual => visual_key_map,
-            .visual_line => visual_line_key_map,
+        return switch (self.mode) {
+            .normal => &normal_key_map,
+            .insert => &insert_key_map,
+            .visual => &visual_key_map,
+            .visual_line => &visual_line_key_map,
         };
-
-        const key_buffer = editor.getKeyBuffer();
-        return try map.tryExecute(panel, key_buffer);
     }
 
-    fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!editor.KeyResult {
+    fn onChar(panel: *editor.Panel, codepoint: u32) anyerror!bool {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        const filetype = self.buffer.filetype;
-        const key_buffer = editor.getKeyBuffer();
-
         switch (self.mode) {
-            .normal => {
-                return try normal_key_map.tryExecute(panel, key_buffer);
-            },
-            .visual => {
-                return try visual_key_map.tryExecute(panel, key_buffer);
-            },
-            .visual_line => {
-                return try visual_line_key_map.tryExecute(panel, key_buffer);
-            },
+            .normal, .visual, .visual_line => return false,
             .insert => {
+                const filetype = self.buffer.filetype;
+
                 var buf = [4]u8{ 0, 0, 0, 0 };
                 const len = try std.unicode.utf8Encode(@intCast(u21, codepoint), &buf);
                 const inserted_buf = buf[0..len];
@@ -618,7 +606,7 @@ pub const BufferPanel = struct {
                     }
                 }
 
-                return editor.KeyResult.insert;
+                return true;
             },
         }
     }

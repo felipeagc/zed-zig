@@ -23,7 +23,6 @@ pub const EditorOptions = struct {
 
 pub const KeyResult = enum {
     none,
-    insert,
     submap,
     command,
 };
@@ -51,11 +50,12 @@ pub const PanelVT = struct {
     name: []const u8,
 
     get_status_line: fn (self: *Panel, allocator: *Allocator) anyerror![]const u8,
+    get_key_map: fn (self: *Panel) *KeyMap,
     draw: fn (self: *Panel, rect: renderer.Rect) anyerror!void,
     deinit: fn (self: *Panel) void,
 
-    on_key: ?fn (self: *Panel, key: renderer.Key, mods: u32) anyerror!KeyResult = null,
-    on_char: ?fn (self: *Panel, codepoint: u32) anyerror!KeyResult = null,
+    on_key_seq: ?fn (self: *Panel, []const u8) anyerror!KeyResult = null,
+    on_char: ?fn (self: *Panel, codepoint: u32) anyerror!bool = null,
     on_scroll: ?fn (self: *Panel, dx: f64, dy: f64) anyerror!void = null,
 
     register_vt: ?fn (allocator: *Allocator) anyerror!void = null,
@@ -77,20 +77,20 @@ pub const Panel = struct {
         self.vt.deinit(self);
     }
 
-    pub fn onKey(panel: *Panel, key: renderer.Key, mods: u32) anyerror!KeyResult {
-        if (panel.vt.on_key) |panel_on_key| {
-            return panel_on_key(panel, key, mods);
+    pub fn onKeySeq(panel: *Panel, seq: []const u8) anyerror!KeyResult {
+        if (panel.vt.on_key_seq) |panel_on_key_seq| {
+            return panel_on_key_seq(panel, seq);
         }
 
         return KeyResult.none;
     }
 
-    pub fn onChar(panel: *Panel, codepoint: u32) anyerror!KeyResult {
+    pub fn onChar(panel: *Panel, codepoint: u32) anyerror!bool {
         if (panel.vt.on_char) |panel_on_char| {
             return panel_on_char(panel, codepoint);
         }
 
-        return KeyResult.none;
+        return false;
     }
 };
 
@@ -144,31 +144,7 @@ fn onKey(key: renderer.Key, mods: u32) void {
     };
 
     if (maybe_seq) |seq| {
-        if (g_editor.key_buffer.items.len > 0) g_editor.key_buffer.append(' ') catch unreachable;
-        g_editor.key_buffer.appendSlice(seq) catch unreachable;
-
-        var result = KeyResult.none;
-
-        result = panel.onKey(key, mods) catch |err| blk: {
-            std.log.err("panel onKey error: {}", .{err});
-            break :blk .none;
-        };
-
-        if (result == .none or result == .submap) {
-            const global_result = g_editor.global_keymap.tryExecute(
-                panel,
-                g_editor.key_buffer.items,
-            ) catch |err| blk: {
-                std.log.err("global onKey error: {}", .{err});
-                break :blk .none;
-            };
-
-            if (result != .submap) result = global_result;
-        }
-
-        if (result != .submap) {
-            resetKeyBuffer();
-        }
+        try executeKeySeq(panel, seq);
     }
 }
 
@@ -182,6 +158,14 @@ fn onChar(codepoint: u32) void {
         return;
     }
 
+    const inserted_character = panel.onChar(codepoint) catch |err| {
+        std.log.err("failed to insert character: {}", .{err});
+        return;
+    };
+    if (inserted_character) {
+        return;
+    }
+
     const maybe_seq: ?[]const u8 = KeyMap.codepointToKeySeq(g_editor.allocator, codepoint) catch |err| {
         std.log.err("sequence onChar error: {}", .{err});
         return;
@@ -191,38 +175,41 @@ fn onChar(codepoint: u32) void {
     };
 
     if (maybe_seq) |seq| {
-        if (g_editor.key_buffer.items.len > 0) {
-            g_editor.key_buffer.append(' ') catch unreachable;
-        }
-        g_editor.key_buffer.appendSlice(seq) catch unreachable;
-
-        var result = KeyResult.none;
-
-        result = panel.onChar(codepoint) catch |err| blk: {
-            std.log.err("panel onChar error: {}", .{err});
-            break :blk .none;
-        };
-
-        if (result == .none or result == .submap) {
-            const global_result = g_editor.global_keymap.tryExecute(
-                panel,
-                g_editor.key_buffer.items,
-            ) catch |err| blk: {
-                std.log.err("global onChar error: {}", .{err});
-                break :blk .none;
-            };
-
-            if (result != .submap) result = global_result;
-        }
-
-        if (result != .submap) {
-            resetKeyBuffer();
-        }
+        try executeKeySeq(panel, seq);
     }
 }
 
-pub fn getKeyBuffer() []const u8 {
-    return g_editor.key_buffer.items;
+fn executeKeySeq(panel: *Panel, partial_seq: []const u8) !void {
+    if (g_editor.key_buffer.items.len > 0) {
+        g_editor.key_buffer.append(' ') catch unreachable;
+    }
+    g_editor.key_buffer.appendSlice(partial_seq) catch unreachable;
+
+    const keymaps = [_]*KeyMap{
+        panel.vt.get_key_map(panel),
+        &g_editor.global_keymap,
+    };
+
+    var got_submap = false;
+    for (keymaps) |keymap| {
+        const result = keymap.tryExecute(
+            panel,
+            g_editor.key_buffer.items,
+        ) catch |err| blk: {
+            std.log.err("onKeySeq error: {}", .{err});
+            break :blk .none;
+        };
+
+        switch (result) {
+            .submap => got_submap = true,
+            .command => break,
+            else => {},
+        }
+    }
+
+    if (!got_submap) {
+        resetKeyBuffer();
+    }
 }
 
 fn resetKeyBuffer() void {

@@ -32,7 +32,11 @@ pub const KeyMap = struct {
         self.map.deinit();
     }
 
-    pub fn tryExecute(self: *@This(), panel: *editor.Panel, sequence: []const u8) !editor.KeyResult {
+    pub fn tryExecute(
+        self: *@This(),
+        panel: *editor.Panel,
+        sequence: []const u8,
+    ) !editor.KeyResult {
         if (sequence.len == 0) return .none;
 
         if (self.map.get(sequence)) |binding| {
