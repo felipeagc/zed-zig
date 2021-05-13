@@ -140,9 +140,12 @@ pub const BufferPanel = struct {
             .visual_line => "[V]",
         };
 
-        return try std.fmt.allocPrint(allocator, "{s} {s} L#{} C#{}", .{
+        const modified_status = if (self.buffer.isModified()) " [+]" else "";
+
+        return try std.fmt.allocPrint(allocator, "{s} {s}{s} L#{} C#{}", .{
             mode_name,
             self.buffer.name,
+            modified_status,
             cursor_pos.line + 1,
             cursor_pos.column + 1,
         });

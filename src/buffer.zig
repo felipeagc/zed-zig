@@ -26,26 +26,29 @@ const Line = struct {
     }
 };
 
-const TextOp = union(enum) {
-    insert: struct {
-        line: usize,
-        column: usize,
-        text: []const u8,
-        codepoint_length: usize,
-    },
-    delete: struct {
-        line: usize,
-        column: usize,
-        text: []const u8,
-        codepoint_length: usize,
-    },
-    begin_checkpoint: struct {
-        line: usize,
-        column: usize,
-    },
-    end_checkpoint: struct {
-        line: usize,
-        column: usize,
+const TextOp = struct {
+    generation: usize,
+    op: union(enum) {
+        insert: struct {
+            line: usize,
+            column: usize,
+            text: []const u8,
+            codepoint_length: usize,
+        },
+        delete: struct {
+            line: usize,
+            column: usize,
+            text: []const u8,
+            codepoint_length: usize,
+        },
+        begin_checkpoint: struct {
+            line: usize,
+            column: usize,
+        },
+        end_checkpoint: struct {
+            line: usize,
+            column: usize,
+        },
     },
 };
 
@@ -69,6 +72,8 @@ pub const Buffer = struct {
     filetype: *FileType,
     highlighted_line_count: usize = 0,
     highlighter_state: ?*HighlighterState = null,
+    saved_generation: usize = 0,
+    current_generation: usize = 1,
 
     pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
         var self = try allocator.create(@This());
@@ -92,7 +97,11 @@ pub const Buffer = struct {
         return self;
     }
 
-    pub fn initWithContent(allocator: *Allocator, content: []const u8, options: BufferOptions) !*Buffer {
+    pub fn initWithContent(
+        allocator: *Allocator,
+        content: []const u8,
+        options: BufferOptions,
+    ) !*Buffer {
         var self = try Buffer.init(allocator, options);
         errdefer self.deinit();
 
@@ -106,7 +115,10 @@ pub const Buffer = struct {
         return self;
     }
 
-    pub fn initFromFile(allocator: *Allocator, options: BufferOptions) !*Buffer {
+    pub fn initFromFile(
+        allocator: *Allocator,
+        options: BufferOptions,
+    ) !*Buffer {
         if (options.path == null) return error.BufferInitMissingPath;
 
         const file = try std.fs.cwd().createFile(options.path.?, .{
@@ -161,11 +173,20 @@ pub const Buffer = struct {
 
             var content_to_write = content;
 
-            if (content_to_write.len >= 1 and '\n' == content_to_write[content_to_write.len - 1]) {
+            if (content_to_write.len >= 1 and
+                '\n' == content_to_write[content_to_write.len - 1])
+            {
                 content_to_write = content_to_write[0 .. content_to_write.len - 1];
             }
 
             try file.writeAll(content_to_write);
+
+            self.saved_generation = if (self.undo_stack.items.len == 0) blk: {
+                break :blk 0;
+            } else blk: {
+                break :blk self.undo_stack
+                    .items[self.undo_stack.items.len - 1].generation;
+            };
 
             std.log.info("Wrote: {s}", .{path});
         } else {
@@ -184,6 +205,18 @@ pub const Buffer = struct {
         return self.lines.items[index].content.items;
     }
 
+    pub fn isModified(self: *Buffer) bool {
+        if (self.undo_stack.items.len == 0) return false;
+        const op = self.undo_stack.items[self.undo_stack.items.len - 1];
+        return op.generation != self.saved_generation;
+    }
+
+    fn nextGeneration(self: *Buffer) usize {
+        const gen = self.current_generation;
+        self.current_generation +%= 1;
+        return gen;
+    }
+
     pub fn deinit(self: *@This()) void {
         if (self.highlighter_state) |highlight_state| {
             highlight_state.deinit();
@@ -194,24 +227,24 @@ pub const Buffer = struct {
         }
 
         for (self.undo_stack.items) |op| {
-            switch (op) {
+            switch (op.op) {
                 .insert => {
-                    self.allocator.free(op.insert.text);
+                    self.allocator.free(op.op.insert.text);
                 },
                 .delete => {
-                    self.allocator.free(op.delete.text);
+                    self.allocator.free(op.op.delete.text);
                 },
                 .end_checkpoint, .begin_checkpoint => {},
             }
         }
 
         for (self.redo_stack.items) |op| {
-            switch (op) {
+            switch (op.op) {
                 .insert => {
-                    self.allocator.free(op.insert.text);
+                    self.allocator.free(op.op.insert.text);
                 },
                 .delete => {
-                    self.allocator.free(op.delete.text);
+                    self.allocator.free(op.op.delete.text);
                 },
                 .end_checkpoint, .begin_checkpoint => {},
             }
@@ -280,9 +313,9 @@ pub const Buffer = struct {
 
         if (options.save_history) {
             for (self.redo_stack.items) |op| {
-                switch (op) {
-                    .insert => self.allocator.free(op.insert.text),
-                    .delete => self.allocator.free(op.delete.text),
+                switch (op.op) {
+                    .insert => self.allocator.free(op.op.insert.text),
+                    .delete => self.allocator.free(op.op.delete.text),
                     .end_checkpoint, .begin_checkpoint => {},
                 }
             }
@@ -290,11 +323,14 @@ pub const Buffer = struct {
             self.redo_stack.shrinkRetainingCapacity(0);
 
             try self.undo_stack.append(TextOp{
-                .insert = .{
-                    .line = line_index,
-                    .column = column_index,
-                    .text = try self.allocator.dupe(u8, text),
-                    .codepoint_length = try std.unicode.utf8CountCodepoints(text),
+                .generation = self.nextGeneration(),
+                .op = .{
+                    .insert = .{
+                        .line = line_index,
+                        .column = column_index,
+                        .text = try self.allocator.dupe(u8, text),
+                        .codepoint_length = try std.unicode.utf8CountCodepoints(text),
+                    },
                 },
             });
         }
@@ -357,20 +393,23 @@ pub const Buffer = struct {
 
         if (options.save_history) {
             for (self.redo_stack.items) |op| {
-                switch (op) {
-                    .insert => self.allocator.free(op.insert.text),
-                    .delete => self.allocator.free(op.delete.text),
+                switch (op.op) {
+                    .insert => self.allocator.free(op.op.insert.text),
+                    .delete => self.allocator.free(op.op.delete.text),
                     .end_checkpoint, .begin_checkpoint => {},
                 }
             }
             self.redo_stack.shrinkRetainingCapacity(0);
 
             try self.undo_stack.append(TextOp{
-                .delete = .{
-                    .line = line_index,
-                    .column = column_index,
-                    .text = result.content.?,
-                    .codepoint_length = codepoint_length,
+                .generation = self.nextGeneration(),
+                .op = .{
+                    .delete = .{
+                        .line = line_index,
+                        .column = column_index,
+                        .text = result.content.?,
+                        .codepoint_length = codepoint_length,
+                    },
                 },
             });
         }
@@ -578,20 +617,20 @@ pub const Buffer = struct {
 
     fn undoOp(self: *@This(), op: TextOp) !void {
         try self.redo_stack.append(op);
-        switch (op) {
+        switch (op.op) {
             .insert => {
                 try self.deleteInternal(
-                    op.insert.line,
-                    op.insert.column,
-                    op.insert.codepoint_length,
+                    op.op.insert.line,
+                    op.op.insert.column,
+                    op.op.insert.codepoint_length,
                     .{ .save_history = false },
                 );
             },
             .delete => {
                 try self.insertInternal(
-                    op.delete.line,
-                    op.delete.column,
-                    op.delete.text,
+                    op.op.delete.line,
+                    op.op.delete.column,
+                    op.op.delete.text,
                     .{ .save_history = false },
                 );
             },
@@ -602,14 +641,14 @@ pub const Buffer = struct {
     pub fn undo(self: *@This(), line: *usize, column: *usize) !void {
         if (self.undo_stack.popOrNull()) |op| {
             try self.undoOp(op);
-            if (op != .end_checkpoint) return;
+            if (op.op != .end_checkpoint) return;
         }
 
         while (self.undo_stack.popOrNull()) |op| {
             try self.undoOp(op);
-            if (op == .begin_checkpoint) {
-                line.* = op.begin_checkpoint.line;
-                column.* = op.begin_checkpoint.column;
+            if (op.op == .begin_checkpoint) {
+                line.* = op.op.begin_checkpoint.line;
+                column.* = op.op.begin_checkpoint.column;
                 return;
             }
         }
@@ -617,20 +656,20 @@ pub const Buffer = struct {
 
     fn redoOp(self: *@This(), op: TextOp) !void {
         try self.undo_stack.append(op);
-        switch (op) {
+        switch (op.op) {
             .insert => {
                 try self.insertInternal(
-                    op.insert.line,
-                    op.insert.column,
-                    op.insert.text,
+                    op.op.insert.line,
+                    op.op.insert.column,
+                    op.op.insert.text,
                     .{ .save_history = false },
                 );
             },
             .delete => {
                 try self.deleteInternal(
-                    op.delete.line,
-                    op.delete.column,
-                    op.delete.codepoint_length,
+                    op.op.delete.line,
+                    op.op.delete.column,
+                    op.op.delete.codepoint_length,
                     .{ .save_history = false },
                 );
             },
@@ -641,14 +680,14 @@ pub const Buffer = struct {
     pub fn redo(self: *@This(), line: *usize, column: *usize) !void {
         if (self.redo_stack.popOrNull()) |op| {
             try self.redoOp(op);
-            if (op != .begin_checkpoint) return;
+            if (op.op != .begin_checkpoint) return;
         }
 
         while (self.redo_stack.popOrNull()) |op| {
             try self.redoOp(op);
-            if (op == .end_checkpoint) {
-                line.* = op.end_checkpoint.line;
-                column.* = op.end_checkpoint.column;
+            if (op.op == .end_checkpoint) {
+                line.* = op.op.end_checkpoint.line;
+                column.* = op.op.end_checkpoint.column;
                 return;
             }
         }
@@ -656,9 +695,12 @@ pub const Buffer = struct {
 
     pub fn beginCheckpoint(self: *@This(), line: usize, column: usize) !void {
         try self.undo_stack.append(TextOp{
-            .begin_checkpoint = .{
-                .line = line,
-                .column = column,
+            .generation = self.nextGeneration(),
+            .op = .{
+                .begin_checkpoint = .{
+                    .line = line,
+                    .column = column,
+                },
             },
         });
     }
@@ -666,16 +708,19 @@ pub const Buffer = struct {
     pub fn endCheckpoint(self: *@This(), line: usize, column: usize) !void {
         if (self.undo_stack.items.len > 0) {
             const last_op = &self.undo_stack.items[self.undo_stack.items.len - 1];
-            if (last_op.* == .begin_checkpoint) {
+            if (last_op.op == .begin_checkpoint) {
                 _ = self.undo_stack.pop();
                 return;
             }
         }
 
         try self.undo_stack.append(TextOp{
-            .end_checkpoint = .{
-                .line = line,
-                .column = column,
+            .generation = self.nextGeneration(),
+            .op = .{
+                .end_checkpoint = .{
+                    .line = line,
+                    .column = column,
+                },
             },
         });
     }
