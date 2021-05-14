@@ -12,6 +12,7 @@ const util = @import("util.zig");
 const mem = std.mem;
 
 const SCRATCH_BUFFER_NAME = "** scratch **";
+const MESSAGES_BUFFER_NAME = "** messages **";
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
 
@@ -137,14 +138,11 @@ fn onKey(key: renderer.Key, mods: u32) void {
         }
     }
 
-    if (g_editor.minibuffer.active) {
-        _ = g_editor.minibuffer.onKey(key, mods) catch |err| {
-            std.log.err("minibuffer onKey error: {}", .{err});
-        };
-        return;
-    }
-
-    const maybe_seq: ?[]const u8 = KeyMap.keyToKeySeq(g_editor.allocator, key, mods) catch |err| {
+    const maybe_seq: ?[]const u8 = KeyMap.keyToKeySeq(
+        g_editor.allocator,
+        key,
+        mods,
+    ) catch |err| {
         std.log.err("sequence onKey error: {}", .{err});
         return;
     };
@@ -175,7 +173,10 @@ fn onChar(codepoint: u32) void {
         return;
     }
 
-    const maybe_seq: ?[]const u8 = KeyMap.codepointToKeySeq(g_editor.allocator, codepoint) catch |err| {
+    const maybe_seq: ?[]const u8 = KeyMap.codepointToKeySeq(
+        g_editor.allocator,
+        codepoint,
+    ) catch |err| {
         std.log.err("sequence onChar error: {}", .{err});
         return;
     };
@@ -189,6 +190,13 @@ fn onChar(codepoint: u32) void {
 }
 
 fn executeKeySeq(panel: *Panel, partial_seq: []const u8) !void {
+    if (g_editor.minibuffer.active) {
+        _ = g_editor.minibuffer.onKeySeq(partial_seq) catch |err| {
+            std.log.err("minibuffer onKeySeq error: {}", .{err});
+        };
+        return;
+    }
+
     if (g_editor.key_buffer.items.len > 0) {
         g_editor.key_buffer.append(' ') catch unreachable;
     }
@@ -418,6 +426,9 @@ pub fn init(allocator: *Allocator) !void {
         "zig",
         @embedFile("../filetypes/zig.json"),
     ));
+
+    try logMessage("Message 1\n", .{});
+    try logMessage("Message 2\n", .{});
 }
 
 pub fn deinit() void {
@@ -527,6 +538,46 @@ pub fn getScratchBuffer() !*Buffer {
     try g_editor.buffers.append(scratch_buffer);
 
     return scratch_buffer;
+}
+
+pub fn getMessagesBuffer() !*Buffer {
+    const allocator = g_editor.allocator;
+
+    for (g_editor.buffers.items) |buffer| {
+        if (mem.eql(u8, buffer.name, MESSAGES_BUFFER_NAME)) {
+            return buffer;
+        }
+    }
+
+    const messages_buffer = try Buffer.initWithContent(
+        allocator,
+        "",
+        .{
+            .name = MESSAGES_BUFFER_NAME,
+            .filetype = getFileType("default"),
+        },
+    );
+
+    try g_editor.buffers.append(messages_buffer);
+
+    return messages_buffer;
+}
+
+pub fn logMessage(comptime fmt: []const u8, args: anytype) !void {
+    const messages_buffer = try getMessagesBuffer();
+    const buf = try std.fmt.allocPrint(g_editor.allocator, fmt, args);
+    defer g_editor.allocator.free(buf);
+
+    const last_line_index = if (messages_buffer.getLineCount() > 0)
+        (messages_buffer.getLineCount() - 1)
+    else
+        0;
+
+    const last_line_length = try std.unicode.utf8CountCodepoints(
+        try messages_buffer.getLine(last_line_index),
+    );
+
+    try messages_buffer.insert(last_line_index, last_line_length, buf);
 }
 
 pub fn addPanel(panel: *Panel) !void {

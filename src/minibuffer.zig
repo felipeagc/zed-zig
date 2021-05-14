@@ -19,12 +19,13 @@ pub const MiniBuffer = struct {
 
     pub const Callbacks = struct {
         on_change: ?editor.Command = null,
-        on_confirm: ?editor.Command= null,
+        on_confirm: ?editor.Command = null,
         on_cancel: ?editor.Command = null,
     };
 
     pub fn init(allocator: *Allocator) !*MiniBuffer {
         const self = try allocator.create(MiniBuffer);
+
         self.* = MiniBuffer{
             .allocator = allocator,
             .text = ArrayList(u8).init(allocator),
@@ -282,6 +283,18 @@ pub const MiniBuffer = struct {
         self.resetContent();
     }
 
+    fn getSelectedContent(self: *MiniBuffer) []const u8 {
+        if (self.options.items.len > 0 and
+            self.filtered_option_indices.items.len > 0 and
+            self.selected_option < self.filtered_option_indices.items.len and
+            self.filtered_option_indices.items[self.selected_option] < self.options.items.len)
+        {
+            return self.options.items[self.filtered_option_indices.items[self.selected_option]];
+        } else {
+            return self.text.items;
+        }
+    }
+
     fn onChange(self: *MiniBuffer) !void {
         self.selected_option = 0;
 
@@ -306,6 +319,8 @@ pub const MiniBuffer = struct {
         self: *MiniBuffer,
         codepoint: u32,
     ) anyerror!bool {
+        if (!self.active) return false;
+
         var text = [4]u8{ 0, 0, 0, 0 };
         var text_bytes = try std.unicode.utf8Encode(@intCast(u21, codepoint), &text);
         try self.insert(text[0..text_bytes], self.cursor);
@@ -316,89 +331,70 @@ pub const MiniBuffer = struct {
         return true;
     }
 
-    pub fn onKey(
+    pub fn onKeySeq(
         self: *MiniBuffer,
-        key: renderer.Key,
-        mods: u32,
+        seq: []const u8,
     ) anyerror!bool {
+        if (!self.active) return false;
+
         const allocator = self.allocator;
 
-        const content_to_copy = if (self.options.items.len > 0 and
-            self.filtered_option_indices.items.len > 0 and
-            self.selected_option < self.filtered_option_indices.items.len and
-            self.filtered_option_indices.items[self.selected_option] < self.options.items.len)
-        blk: {
-            break :blk self.options.items[self.filtered_option_indices.items[self.selected_option]];
-        } else blk: {
-            break :blk self.text.items;
-        };
-
-        const content = try allocator.dupe(u8, content_to_copy);
+        const content = try allocator.dupe(u8, self.getSelectedContent());
         defer allocator.free(content);
 
-        return switch (key) {
-            .@"<esc>" => blk: {
-                self.resetContent();
-                self.active = false;
+        if (mem.eql(u8, seq, "<esc>")) {
+            self.resetContent();
+            self.active = false;
 
-                if (self.callbacks.on_cancel) |on_cancel| {
-                    if (self.panel) |panel| {
-                        try on_cancel(panel, &[_][]const u8 {content});
-                    }
+            if (self.callbacks.on_cancel) |on_cancel| {
+                if (self.panel) |panel| {
+                    try on_cancel(panel, &[_][]const u8{content});
                 }
-                break :blk true;
-            },
-            .@"<enter>" => blk: {
-                self.resetContent();
-                self.active = false;
+            }
+        } else if (mem.eql(u8, seq, "<enter>")) {
+            self.resetContent();
+            self.active = false;
 
-                if (self.callbacks.on_confirm) |on_confirm| {
-                    if (self.panel) |panel| {
-                        try on_confirm(panel, &[_][]const u8 {content});
-                    }
+            if (self.callbacks.on_confirm) |on_confirm| {
+                if (self.panel) |panel| {
+                    try on_confirm(panel, &[_][]const u8{content});
                 }
-                break :blk true;
-            },
-            .@"<backspace>" => blk: {
-                if (self.cursor > 0) {
-                    self.cursor -= 1;
-                    try self.delete(self.cursor, 1);
+            }
+        } else if (mem.eql(u8, seq, "<backspace>")) {
+            if (self.cursor > 0) {
+                self.cursor -= 1;
+                try self.delete(self.cursor, 1);
 
-                    try self.onChange();
-                }
-                break :blk true;
-            },
-            .@"<delete>" => blk: {
-                const text_length = try std.unicode.utf8CountCodepoints(self.text.items);
-                if (self.cursor < text_length) {
-                    try self.delete(self.cursor, 1);
+                try self.onChange();
+            }
+        } else if (mem.eql(u8, seq, "<delete>")) {
+            const text_length = try std.unicode.utf8CountCodepoints(self.text.items);
+            if (self.cursor < text_length) {
+                try self.delete(self.cursor, 1);
 
-                    try self.onChange();
-                }
-                break :blk true;
-            },
-            .@"<left>" => blk: {
-                if (self.cursor > 0) self.cursor -= 1;
-                break :blk true;
-            },
-            .@"<right>" => blk: {
-                if ((self.cursor + 1) <= self.text.items.len) self.cursor += 1;
-                break :blk true;
-            },
-            .@"<up>" => blk: {
-                if ((self.selected_option + 1) < self.filtered_option_indices.items.len) {
-                    self.selected_option += 1;
-                }
-                break :blk true;
-            },
-            .@"<down>" => blk: {
-                if (self.selected_option > 0) {
-                    self.selected_option -= 1;
-                }
-                break :blk true;
-            },
-            else => false,
-        };
+                try self.onChange();
+            }
+        } else if (mem.eql(u8, seq, "<left>") or mem.eql(u8, seq, "C-b")) {
+            if (self.cursor > 0) {
+                self.cursor -= 1;
+            }
+        } else if (mem.eql(u8, seq, "<right>") or mem.eql(u8, seq, "C-f")) {
+            if ((self.cursor + 1) <= self.text.items.len) {
+                self.cursor += 1;
+            }
+        } else if (mem.eql(u8, seq, "<up>") or mem.eql(u8, seq, "C-p")) {
+            if ((self.selected_option + 1) < self.filtered_option_indices.items.len) {
+                self.selected_option += 1;
+            }
+        } else if (mem.eql(u8, seq, "<down>") or mem.eql(u8, seq, "C-n")) {
+            if (self.selected_option > 0) {
+                self.selected_option -= 1;
+            }
+        } else {
+            return false;
+        }
+
+        return true;
     }
 };
 
@@ -411,7 +407,7 @@ comptime {
     _ = MiniBuffer.getContent;
     _ = MiniBuffer.draw;
     _ = MiniBuffer.onChar;
-    _ = MiniBuffer.onKey;
+    _ = MiniBuffer.onKeySeq;
 }
 
 test "minibuffer" {
