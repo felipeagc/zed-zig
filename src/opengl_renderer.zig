@@ -552,6 +552,9 @@ pub fn beginFrame() !void {
                     g_renderer.on_key_callback(keyboard.key, keyboard.mods);
                 }
             },
+            .scroll => |scroll| {
+                g_renderer.on_scroll_callback(scroll.x, scroll.y);
+            },
             else => {},
         }
     }

@@ -25,6 +25,10 @@ pub const Event = union(enum) {
     codepoint: struct {
         codepoint: u32,
     },
+    scroll: struct {
+        x: f64,
+        y: f64,
+    },
     mouse_motion: struct {
         x: i32,
         y: i32,

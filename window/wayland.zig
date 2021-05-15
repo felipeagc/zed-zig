@@ -225,6 +225,35 @@ pub const WaylandWindowSystem = struct {
                     std.log.err("failed to push mouse motion event: {}", .{err});
                 };
             },
+            .axis => |axis| {
+                var emit_event = Event{
+                    .scroll = .{ .x = 0, .y = 0 },
+                };
+
+                switch (axis.axis) {
+                    .horizontal_scroll => {
+                        emit_event.scroll.x = -axis.value.toDouble();
+                        if (emit_event.scroll.x > 0) {
+                            emit_event.scroll.x = 1;
+                        } else {
+                            emit_event.scroll.x = -1;
+                        }
+                    },
+                    .vertical_scroll => {
+                        emit_event.scroll.y = -axis.value.toDouble();
+                        if (emit_event.scroll.y > 0) {
+                            emit_event.scroll.y = 1;
+                        } else {
+                            emit_event.scroll.y = -1;
+                        }
+                    },
+                    else => {},
+                }
+
+                window_system.pushEvent(emit_event) catch |err| {
+                    std.log.err("failed to push scroll event: {}", .{err});
+                };
+            },
             .button => |button| {},
             else => {},
         }
