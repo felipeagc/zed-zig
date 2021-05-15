@@ -11,20 +11,19 @@ const c = @cImport({
     @cInclude("freetype/ftoutln.h");
     @cInclude("fontconfig/fontconfig.h");
     @cInclude("epoxy/gl.h");
-    @cInclude("GLFW/glfw3.h");
 });
 
-pub const Key = @import("key.zig").Key;
-pub const KeyMod = @import("key.zig").KeyMod;
+pub const win = @import("window");
 
-pub const OnKeyCallback = fn (key: Key, mods: u32) void;
+pub const OnKeyCallback = fn (key: win.Key, mods: win.KeyMods) void;
 pub const OnCharCallback = fn (codepoint: u32) void;
 pub const OnScrollCallback = fn (dx: f64, dy: f64) void;
 
 const Renderer = struct {
     allocator: *Allocator,
 
-    window: *c.GLFWwindow,
+    window_system: *win.WindowSystem,
+    window: *win.Window,
     shader: Program,
     vertex_buffer: u32,
     index_buffer: u32,
@@ -414,59 +413,13 @@ pub fn init(
         return error.FreetypeInitError;
     }
 
-    if (c.glfwInit() != c.GLFW_TRUE) {
-        return error.GlfwInitError;
-    }
+    var window_system = try win.WindowSystem.init(allocator);
+    var window = try window_system.createWindow(800, 600, .{
+        .opengl = true,
+    });
 
-    _ = c.glfwSetErrorCallback(struct {
-        fn callback(error_code: c_int, description: [*c]const u8) callconv(.C) void {
-            std.log.err("{s}", .{description});
-        }
-    }.callback);
-
-    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, 3);
-    c.glfwWindowHint(c.GLFW_CONTEXT_VERSION_MAJOR, 2);
-    var glfw_window = c.glfwCreateWindow(800, 600, "Zed", null, null) orelse return error.GlfwInitError;
-
-    c.glfwMakeContextCurrent(glfw_window);
-    c.glfwSwapInterval(1);
-
-    _ = c.glfwSetFramebufferSizeCallback(glfw_window, struct {
-        fn callback(
-            _: ?*c.GLFWwindow,
-            width: c_int,
-            height: c_int,
-        ) callconv(.C) void {}
-    }.callback);
-
-    _ = c.glfwSetCharCallback(glfw_window, struct {
-        fn callback(
-            _: ?*c.GLFWwindow,
-            codepoint: c_uint,
-        ) callconv(.C) void {
-            g_renderer.on_char_callback(@intCast(u32, codepoint));
-        }
-    }.callback);
-
-    _ = c.glfwSetKeyCallback(glfw_window, struct {
-        fn callback(
-            _: ?*c.GLFWwindow,
-            key: c_int,
-            scancode: c_int,
-            action: c_int,
-            mods: c_int,
-        ) callconv(.C) void {
-            if (action == c.GLFW_PRESS or action == c.GLFW_REPEAT) {
-                g_renderer.on_key_callback(@intToEnum(Key, key), @intCast(u32, mods));
-            }
-        }
-    }.callback);
-
-    _ = c.glfwSetScrollCallback(glfw_window, struct {
-        fn callback(_: ?*c.GLFWwindow, xoffset: f64, yoffset: f64) callconv(.C) void {
-            g_renderer.on_scroll_callback(xoffset, yoffset);
-        }
-    }.callback);
+    window.glMakeContextCurrent();
+    window_system.glSwapInterval(1);
 
     var vertex_array: u32 = 0;
     var vertex_buffer: u32 = 0;
@@ -543,13 +496,13 @@ pub fn init(
         c.glBindTexture(c.GL_TEXTURE_2D, 0);
     }
 
-    c.glfwSetWindowUserPointer(glfw_window, @ptrCast(*c_void, &g_renderer));
     g_renderer.allocator = allocator;
     g_renderer.fc_config = fc_config;
 
     g_renderer = Renderer{
         .allocator = allocator,
-        .window = glfw_window,
+        .window_system = window_system,
+        .window = window,
         .shader = try Program.init(VERTEX_SHADER, FRAGMENT_SHADER),
         .vertex_buffer = vertex_buffer,
         .index_buffer = index_buffer,
@@ -578,23 +531,30 @@ pub fn deinit() void {
     g_renderer.commands.deinit();
     g_renderer.vertices.deinit();
     g_renderer.indices.deinit();
-    c.glfwDestroyWindow(g_renderer.window);
-    c.glfwTerminate();
     c.FcConfigDestroy(g_renderer.fc_config);
     c.FcFini();
+    g_renderer.window.deinit();
+    g_renderer.window_system.deinit();
 }
 
 pub fn shouldClose() bool {
-    return c.glfwWindowShouldClose(g_renderer.window) == c.GLFW_TRUE;
+    return g_renderer.window.shouldClose();
 }
 
 pub fn beginFrame() !void {
-    if (g_renderer.should_redraw) {
-        c.glfwPollEvents();
-    } else {
-        c.glfwWaitEvents();
+    while (g_renderer.window_system.nextEvent()) |event| {
+        switch (event) {
+            .codepoint => |codepoint| {
+                g_renderer.on_char_callback(codepoint.codepoint);
+            },
+            .keyboard => |keyboard| {
+                if (keyboard.state == .pressed or keyboard.state == .repeat) {
+                    g_renderer.on_key_callback(keyboard.key, keyboard.mods);
+                }
+            },
+            else => {},
+        }
     }
-    g_renderer.should_redraw = false;
 
     g_renderer.commands.shrinkRetainingCapacity(0);
     g_renderer.vertices.shrinkRetainingCapacity(0);
@@ -672,7 +632,18 @@ pub fn endFrame() !void {
     c.glBindBuffer(c.GL_ARRAY_BUFFER, 0);
     c.glBindBuffer(c.GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    c.glfwSwapBuffers(g_renderer.window);
+    g_renderer.window.glSwapBuffers();
+
+    if (g_renderer.should_redraw) {
+        g_renderer.window_system.pollEvents() catch |err| {
+            std.log.err("pollEvents error: {}", .{err});
+        };
+    } else {
+        g_renderer.window_system.waitEvents(null) catch |err| {
+            std.log.err("waitEvents error: {}", .{err});
+        };
+    }
+    g_renderer.should_redraw = false;
 }
 
 pub fn requestRedraw() callconv(.Inline) void {
@@ -680,21 +651,23 @@ pub fn requestRedraw() callconv(.Inline) void {
 }
 
 pub fn getClipboardString(allocator: *Allocator) callconv(.Inline) !?[]const u8 {
-    var maybe_c_str = c.glfwGetClipboardString(g_renderer.window);
-    if (maybe_c_str) |c_str| {
-        return try allocator.dupe(u8, mem.spanZ(c_str));
-    }
+    // TODO
+    // var maybe_c_str = c.glfwGetClipboardString(g_renderer.window);
+    // if (maybe_c_str) |c_str| {
+    //     return try allocator.dupe(u8, mem.spanZ(c_str));
+    // }
     return null;
 }
 
 pub fn setClipboardString(str: []const u8) callconv(.Inline) !void {
-    var str_z = try g_renderer.allocator.dupeZ(u8, str);
-    defer g_renderer.allocator.free(str_z);
-    c.glfwSetClipboardString(g_renderer.window, str_z);
+    // TODO
+    // var str_z = try g_renderer.allocator.dupeZ(u8, str);
+    // defer g_renderer.allocator.free(str_z);
+    // c.glfwSetClipboardString(g_renderer.window, str_z);
 }
 
 pub fn getWindowSize(w: *i32, h: *i32) callconv(.Inline) !void {
-    c.glfwGetFramebufferSize(g_renderer.window, w, h);
+    g_renderer.window.getSize(w, h);
 }
 
 fn pushCommand(cmd: Command) callconv(.Inline) !void {

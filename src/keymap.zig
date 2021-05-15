@@ -1,6 +1,8 @@
 const std = @import("std");
 const renderer = @import("opengl_renderer.zig");
 const editor = @import("editor.zig");
+const win = @import("window");
+const getKeyName = @import("key.zig").getKeyName;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
@@ -130,64 +132,68 @@ pub const KeyMap = struct {
         }
     }
 
-    pub fn keyToKeySeq(allocator: *Allocator, key: renderer.Key, mods: u32) !?[]const u8 {
+    pub fn keyToKeySeq(
+        allocator: *Allocator,
+        key: win.Key,
+        mods: win.KeyMods,
+    ) !?[]const u8 {
         const valid_key = switch (key) {
-            // .@"<space>",
-            .@"<esc>",
-            .@"<enter>",
-            .@"<tab>",
-            .@"<backspace>",
-            .@"<insert>",
-            .@"<delete>",
-            .@"<right>",
-            .@"<left>",
-            .@"<down>",
-            .@"<up>",
-            .@"<page_up>",
-            .@"<page_down>",
-            .@"<home>",
-            .@"<end>",
-            .@"<caps_lock>",
-            .@"<scroll_lock>",
-            .@"<num_lock>",
-            .@"<print_screen>",
-            .@"<pause>",
-            .@"<f1>",
-            .@"<f2>",
-            .@"<f3>",
-            .@"<f4>",
-            .@"<f5>",
-            .@"<f6>",
-            .@"<f7>",
-            .@"<f8>",
-            .@"<f9>",
-            .@"<f10>",
-            .@"<f11>",
-            .@"<f12>",
-            .@"<f13>",
-            .@"<f14>",
-            .@"<f15>",
-            .@"<f16>",
-            .@"<f17>",
-            .@"<f18>",
-            .@"<f19>",
-            .@"<f20>",
-            .@"<f21>",
-            .@"<f22>",
-            .@"<f23>",
-            .@"<f24>",
-            .@"<f25>",
+            // .space,
+            .escape,
+            .enter,
+            .tab,
+            .backspace,
+            .insert,
+            .delete,
+            .right,
+            .left,
+            .down,
+            .up,
+            .page_up,
+            .page_down,
+            .home,
+            .end,
+            .caps_lock,
+            .scroll_lock,
+            .num_lock,
+            .print_screen,
+            .pause,
+            .f1,
+            .f2,
+            .f3,
+            .f4,
+            .f5,
+            .f6,
+            .f7,
+            .f8,
+            .f9,
+            .f10,
+            .f11,
+            .f12,
+            .f13,
+            .f14,
+            .f15,
+            .f16,
+            .f17,
+            .f18,
+            .f19,
+            .f20,
+            .f21,
+            .f22,
+            .f23,
+            .f24,
+            .f25,
             .menu,
             => true,
-            else => mods & (renderer.KeyMod.control | renderer.KeyMod.alt) != 0,
+            else => mods.control or mods.alt,
         };
 
         if (!valid_key) return null;
 
-        const key_name = @tagName(key);
-        const control_prefix = if (mods & renderer.KeyMod.control != 0) "C-" else "";
-        const alt_prefix = if (mods & renderer.KeyMod.alt != 0) "A-" else "";
-        const shift_prefix = if (mods & renderer.KeyMod.shift != 0) "S-" else "";
+        const key_name = getKeyName(key);
+        const control_prefix = if (mods.control) "C-" else "";
+        const alt_prefix = if (mods.alt) "A-" else "";
+        const shift_prefix = if (mods.shift) "S-" else "";
 
         return try std.fmt.allocPrint(
             allocator,

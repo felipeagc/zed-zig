@@ -1,4 +1,5 @@
 const std = @import("std");
+const ScanProtocolsStep = @import("window/zig-wayland/build.zig").ScanProtocolsStep;
 
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
@@ -11,17 +12,40 @@ pub fn build(b: *std.build.Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
+    const scanner = ScanProtocolsStep.create(b);
+    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
+    scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
+
     const exe = b.addExecutable("zed", "src/main.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();
 
     exe.linkLibC();
-    exe.linkSystemLibrary("glfw");
-    exe.linkSystemLibrary("epoxy");
+
     exe.linkSystemLibrary("oniguruma");
-    exe.linkSystemLibrary("fontconfig");
     exe.linkSystemLibrary("freetype");
+
+    if (target.getOsTag() == .linux) {
+        scanner.addCSource(exe);
+        exe.step.dependOn(&scanner.step);
+        exe.addPackage(scanner.getPkg());
+
+        exe.linkSystemLibrary("wayland-client");
+        exe.linkSystemLibrary("wayland-egl");
+        exe.linkSystemLibrary("wayland-cursor");
+        exe.linkSystemLibrary("xkbcommon");
+        exe.linkSystemLibrary("epoxy");
+        exe.linkSystemLibrary("fontconfig");
+    }
+
+    exe.addPackage(std.build.Pkg{
+        .name = "window",
+        .path = "./window/common.zig",
+        .dependencies = &.{
+            scanner.getPkg(),
+        },
+    });
 
     const run_cmd = exe.run();
     run_cmd.step.dependOn(b.getInstallStep());
@@ -42,7 +66,6 @@ pub fn build(b: *std.build.Builder) void {
     for (tests) |test_| {
         test_.linkLibC();
         test_.setBuildMode(mode);
-        test_.linkSystemLibrary("glfw");
         test_.linkSystemLibrary("epoxy");
         test_.linkSystemLibrary("oniguruma");
         test_.linkSystemLibrary("fontconfig");

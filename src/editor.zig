@@ -9,6 +9,7 @@ const ColorScheme = @import("highlighter.zig").ColorScheme;
 const FileType = @import("filetype.zig").FileType;
 const regex = @import("regex.zig");
 const util = @import("util.zig");
+const win = @import("window");
 const mem = std.mem;
 
 const SCRATCH_BUFFER_NAME = "** scratch **";
@@ -128,10 +129,10 @@ pub const CommandRegistry = struct {
 
 var g_editor: Editor = undefined;
 
-fn onKey(key: renderer.Key, mods: u32) void {
+fn onKey(key: win.Key, mods: win.KeyMods) void {
     var panel: *Panel = g_editor.panels.items[g_editor.selected_panel];
 
-    if (key == .@"<esc>") {
+    if (key == .escape) {
         if (g_editor.key_buffer.items.len > 0) {
             resetKeyBuffer();
             return;
