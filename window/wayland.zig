@@ -35,6 +35,7 @@ pub const WaylandWindowSystem = struct {
 
     data_device_manager: ?*wl.DataDeviceManager = null,
     data_device: ?*wl.DataDevice = null,
+    keyboard_enter_serial: u32 = 0,
 
     cursor_theme: ?*wl.CursorTheme = null,
     cursor_left_ptr: ?Cursor = null,
@@ -215,18 +216,17 @@ pub const WaylandWindowSystem = struct {
                 if (window_system.data_device == null) {
                     if (window_system.data_device_manager) |data_device_manager| {
                         if (window_system.seat) |seat| {
-                            const data_device = data_device_manager.getDataDevice(seat) catch |err| {
+                            if (data_device_manager.getDataDevice(seat)) |data_device| {
+                                window_system.data_device = data_device;
+
+                                data_device.setListener(
+                                    *WaylandWindowSystem,
+                                    dataDeviceListener,
+                                    window_system,
+                                );
+                            } else |err| {
                                 std.log.err("failed to get data device: {}", .{err});
-                                return;
-                            };
-
-                            window_system.data_device = data_device;
-
-                            data_device.setListener(
-                                *WaylandWindowSystem,
-                                dataDeviceListener,
-                                window_system,
-                            );
+                            }
                         }
                     }
                 }
@@ -267,6 +267,37 @@ pub const WaylandWindowSystem = struct {
                     window_system.keyboard.?.release();
                     window_system.keyboard = null;
                 }
+            },
+            else => {},
+        }
+    }
+
+    fn dataSourceListener(
+        data_source: *wl.DataSource,
+        event: wl.DataSource.Event,
+        window_system: *WaylandWindowSystem,
+    ) void {
+        switch (event) {
+            .send => |send| {
+                if (std.cstr.cmp(send.mime_type, "text/plain") == 0 or
+                    std.cstr.cmp(send.mime_type, "text/plain;charset=utf-8") == 0 or
+                    std.cstr.cmp(send.mime_type, "UTF8_STRING") == 0 or
+                    std.cstr.cmp(send.mime_type, "STRING") == 0 or
+                    std.cstr.cmp(send.mime_type, "TEXT") == 0)
+                {
+                    _ = std.os.write(
+                        send.fd,
+                        window_system.clipboard_content.items,
+                    ) catch |err| {
+                        std.log.err("failed to write clipboard contents: {}", .{err});
+                        return;
+                    };
+                }
+
+                std.os.close(send.fd);
+            },
+            .cancelled => |cancelled| {
+                data_source.destroy();
             },
             else => {},
         }
@@ -483,7 +514,8 @@ pub const WaylandWindowSystem = struct {
                 window_system.repeat_rate = repeat_info.rate;
                 window_system.repeat_delay = repeat_info.delay;
             },
-            .enter => {
+            .enter => |enter| {
+                window_system.keyboard_enter_serial = enter.serial;
                 c.xkb_compose_state_reset(window_system.xkb_compose_state);
             },
             .leave => {
@@ -729,6 +761,31 @@ pub const WaylandWindowSystem = struct {
         content: []const u8,
     ) anyerror!void {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
+
+        if (self.data_device_manager) |data_device_manager| {
+            if (self.data_device) |data_device| {
+                if (data_device_manager.createDataSource()) |data_source| {
+                    self.clipboard_content.shrinkRetainingCapacity(0);
+                    try self.clipboard_content.appendSlice(content);
+
+                    data_source.setListener(
+                        *WaylandWindowSystem,
+                        dataSourceListener,
+                        self,
+                    );
+
+                    data_source.offer("text/plain");
+                    data_source.offer("text/plain;charset=utf-8");
+                    data_source.offer("UTF8_STRING");
+                    data_source.offer("STRING");
+                    data_source.offer("TEXT");
+
+                    data_device.setSelection(data_source, self.keyboard_enter_serial);
+                } else |err| {
+                    std.log.err("failed to get data source: {}", .{err});
+                }
+            }
+        }
     }
 
     fn glSwapInterval(window_system: *WindowSystem, interval: i32) void {
