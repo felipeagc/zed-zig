@@ -43,10 +43,10 @@ pub const WaylandWindowSystem = struct {
     repeat_keycode: ?c.xkb_keycode_t = null,
 
     xkb_context: *c.struct_xkb_context,
+    xkb_compose_table: *c.struct_xkb_compose_table,
+    xkb_compose_state: *c.struct_xkb_compose_state,
     xkb_keymap: ?*c.struct_xkb_keymap = null,
     xkb_state: ?*c.struct_xkb_state = null,
-    xkb_compose_table: ?*c.struct_xkb_compose_table = null,
-    xkb_compose_state: ?*c.struct_xkb_compose_state = null,
 
     event_queue: [4096]Event = undefined,
     event_queue_head: usize = 0,
@@ -89,11 +89,35 @@ pub const WaylandWindowSystem = struct {
             .XKB_CONTEXT_NO_FLAGS,
         ) orelse return error.XkbInitError;
 
+        var locale = std.os.getenv("LC_ALL");
+        if (locale == null) locale = std.os.getenv("LC_CTYPE");
+        if (locale == null) locale = std.os.getenv("LANG");
+        if (locale == null) locale = std.os.getenv("C");
+
+        const locale_z = allocator.dupeZ(
+            u8,
+            locale.?,
+        ) catch unreachable;
+        defer allocator.free(locale_z);
+
+        const xkb_compose_table = c.xkb_compose_table_new_from_locale(
+            xkb_context,
+            locale_z,
+            .XKB_COMPOSE_COMPILE_NO_FLAGS,
+        ) orelse return error.XkbInitError;
+
+        const xkb_compose_state = c.xkb_compose_state_new(
+            xkb_compose_table,
+            .XKB_COMPOSE_STATE_NO_FLAGS,
+        ) orelse return error.XkbInitError;
+
         self.* = WaylandWindowSystem{
             .allocator = allocator,
             .display = display,
             .registry = registry,
             .xkb_context = xkb_context,
+            .xkb_compose_table = xkb_compose_table,
+            .xkb_compose_state = xkb_compose_state,
 
             .window_system = WindowSystem{
                 .deinit_fn = deinit,
@@ -280,9 +304,15 @@ pub const WaylandWindowSystem = struct {
                         },
                     );
 
+                    var compose_accepted = false;
+
                     switch (key.state) {
                         .pressed => {
                             window_system.startKeyRepeat(keycode) catch unreachable;
+                            compose_accepted = (c.xkb_compose_state_feed(
+                                window_system.xkb_compose_state,
+                                keysym,
+                            ) == .XKB_COMPOSE_FEED_ACCEPTED);
                         },
                         .released => {
                             if (window_system.repeat_keycode == keycode) {
@@ -292,45 +322,43 @@ pub const WaylandWindowSystem = struct {
                         _ => {},
                     }
 
-                    if (window_system.xkb_compose_state) |xkb_compose_state| {
-                        if (key.state == .pressed and
-                            c.xkb_compose_state_feed(xkb_compose_state, keysym) == .XKB_COMPOSE_FEED_ACCEPTED)
-                        {
-                            var buf: [128]u8 = undefined;
-                            var ptr = @ptrCast([*:0]u8, &buf[0]);
+                    if (compose_accepted) {
+                        var buf: [128]u8 = undefined;
+                        var ptr = @ptrCast([*:0]u8, &buf[0]);
 
-                            switch (c.xkb_compose_state_get_status(xkb_compose_state)) {
-                                .XKB_COMPOSE_COMPOSED => {
-                                    const byte_count = c.xkb_compose_state_get_utf8(
-                                        xkb_compose_state,
-                                        ptr,
-                                        buf.len,
-                                    );
-                                    if (byte_count > 0) {
-                                        const str = buf[0..@intCast(usize, byte_count)];
-                                        const view = std.unicode.Utf8View.init(str) catch |err| {
-                                            std.log.err("Unicode parse error: {}", .{err});
-                                            return;
-                                        };
-                                        var iter = view.iterator();
-                                        while (iter.nextCodepoint()) |codepoint| {
-                                            window_system.emitCodepointEvent(codepoint);
-                                        }
-                                    }
-                                },
-                                .XKB_COMPOSE_NOTHING => {
-                                    const codepoint: u32 = c.xkb_state_key_get_utf32(
-                                        xkb_state,
-                                        key.key + 8,
-                                    );
-                                    if (codepoint > 0) {
+                        switch (c.xkb_compose_state_get_status(
+                            window_system.xkb_compose_state,
+                        )) {
+                            .XKB_COMPOSE_COMPOSED => {
+                                const byte_count = c.xkb_compose_state_get_utf8(
+                                    window_system.xkb_compose_state,
+                                    ptr,
+                                    buf.len,
+                                );
+                                if (byte_count > 0) {
+                                    const str = buf[0..@intCast(usize, byte_count)];
+                                    const view = std.unicode.Utf8View.init(str) catch |err| {
+                                        std.log.err("Unicode parse error: {}", .{err});
+                                        return;
+                                    };
+                                    var iter = view.iterator();
+                                    while (iter.nextCodepoint()) |codepoint| {
                                         window_system.emitCodepointEvent(codepoint);
                                     }
-                                },
-                                .XKB_COMPOSE_COMPOSING => {},
-                                .XKB_COMPOSE_CANCELLED => {},
-                                else => {},
-                            }
+                                }
+                            },
+                            .XKB_COMPOSE_NOTHING => {
+                                const codepoint: u32 = c.xkb_state_key_get_utf32(
+                                    xkb_state,
+                                    key.key + 8,
+                                );
+                                if (codepoint > 0) {
+                                    window_system.emitCodepointEvent(codepoint);
+                                }
+                            },
+                            .XKB_COMPOSE_COMPOSING => {},
+                            .XKB_COMPOSE_CANCELLED => {},
+                            else => {},
                         }
                     }
                 }
@@ -353,19 +381,13 @@ pub const WaylandWindowSystem = struct {
                 window_system.repeat_delay = repeat_info.delay;
             },
             .enter => {
-                if (window_system.xkb_compose_state) |xkb_compose_state| {
-                    c.xkb_compose_state_reset(xkb_compose_state);
-                }
+                c.xkb_compose_state_reset(window_system.xkb_compose_state);
             },
             .leave => {
-                if (window_system.xkb_compose_state) |xkb_compose_state| {
-                    c.xkb_compose_state_reset(xkb_compose_state);
-                }
+                c.xkb_compose_state_reset(window_system.xkb_compose_state);
                 window_system.stopKeyRepeat();
             },
             .keymap => |keymap| {
-                defer std.os.close(keymap.fd);
-
                 const map_shm = std.os.mmap(
                     null,
                     keymap.size,
@@ -374,37 +396,28 @@ pub const WaylandWindowSystem = struct {
                     keymap.fd,
                     0,
                 ) catch unreachable;
-                defer std.os.munmap(map_shm);
 
-                window_system.xkb_keymap = c.xkb_keymap_new_from_string(
+                const xkb_keymap = c.xkb_keymap_new_from_string(
                     window_system.xkb_context,
                     map_shm.ptr,
                     .XKB_KEYMAP_FORMAT_TEXT_V1,
                     .XKB_KEYMAP_COMPILE_NO_FLAGS,
                 );
-                window_system.xkb_state = c.xkb_state_new(window_system.xkb_keymap);
 
-                var locale = std.os.getenv("LC_ALL");
-                if (locale == null) locale = std.os.getenv("LC_CTYPE");
-                if (locale == null) locale = std.os.getenv("LANG");
-                if (locale == null) locale = std.os.getenv("C");
+                std.os.close(keymap.fd);
+                std.os.munmap(map_shm);
 
-                const locale_z = window_system.allocator.dupeZ(
-                    u8,
-                    locale.?,
-                ) catch unreachable;
-                defer window_system.allocator.free(locale_z);
+                const xkb_state = c.xkb_state_new(xkb_keymap);
 
-                window_system.xkb_compose_table = c.xkb_compose_table_new_from_locale(
-                    window_system.xkb_context,
-                    locale_z,
-                    .XKB_COMPOSE_COMPILE_NO_FLAGS,
-                );
+                if (window_system.xkb_state) |xkb_state_| {
+                    c.xkb_state_unref(xkb_state_);
+                }
+                if (window_system.xkb_keymap) |xkb_keymap_| {
+                    c.xkb_keymap_unref(xkb_keymap_);
+                }
 
-                window_system.xkb_compose_state = c.xkb_compose_state_new(
-                    window_system.xkb_compose_table,
-                    .XKB_COMPOSE_STATE_NO_FLAGS,
-                );
+                window_system.xkb_keymap = xkb_keymap;
+                window_system.xkb_state = xkb_state;
             },
         }
     }
