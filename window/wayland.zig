@@ -428,9 +428,11 @@ pub const WaylandWindowSystem = struct {
                     const keycode = key.key + 8;
                     const keysym = c.xkb_state_key_get_one_sym(xkb_state, keycode);
 
+                    const mods = window_system.getCurrentMods();
+
                     window_system.emitKeyEvent(
                         xkbKeysymToKey(keysym),
-                        window_system.getCurrentMods(),
+                        mods,
                         switch (key.state) {
                             .pressed => .pressed,
                             .released => .released,
@@ -443,10 +445,13 @@ pub const WaylandWindowSystem = struct {
                     switch (key.state) {
                         .pressed => {
                             window_system.startKeyRepeat(keycode) catch unreachable;
-                            compose_accepted = (c.xkb_compose_state_feed(
-                                window_system.xkb_compose_state,
-                                keysym,
-                            ) == .XKB_COMPOSE_FEED_ACCEPTED);
+
+                            if (!mods.control) {
+                                compose_accepted = (c.xkb_compose_state_feed(
+                                    window_system.xkb_compose_state,
+                                    keysym,
+                                ) == .XKB_COMPOSE_FEED_ACCEPTED);
+                            }
                         },
                         .released => {
                             if (window_system.repeat_keycode == keycode) {
@@ -681,15 +686,21 @@ pub const WaylandWindowSystem = struct {
                             keycode,
                         );
 
+                        const mods = self.getCurrentMods();
                         self.emitKeyEvent(
                             xkbKeysymToKey(keysym),
-                            self.getCurrentMods(),
+                            mods,
                             .repeat,
                         );
 
-                        const codepoint: u32 = c.xkb_state_key_get_utf32(xkb_state, keycode);
-                        if (codepoint > 0) {
-                            self.emitCodepointEvent(codepoint);
+                        if (!mods.control) {
+                            const codepoint: u32 = c.xkb_state_key_get_utf32(
+                                xkb_state,
+                                keycode,
+                            );
+                            if (codepoint > 0) {
+                                self.emitCodepointEvent(codepoint);
+                            }
                         }
                     }
                 }
