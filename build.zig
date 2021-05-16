@@ -15,6 +15,7 @@ pub fn build(b: *std.build.Builder) void {
     const scanner = ScanProtocolsStep.create(b);
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
+    scanner.addSystemProtocol("unstable/primary-selection/primary-selection-unstable-v1.xml");
 
     const exe = b.addExecutable("zed", "src/main.zig");
     exe.setTarget(target);
