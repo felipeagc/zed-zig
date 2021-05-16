@@ -207,16 +207,19 @@ pub const MiniBuffer = struct {
 
         try renderer.setScissor(compl_rect);
 
-        renderer.setColor(color_scheme.getFace(.default).background);
+        renderer.setColor(color_scheme.getFace(.border).background);
         try renderer.drawRect(compl_rect);
 
         var text_y = compl_rect.y + compl_rect.h;
-        for (self.filtered_option_indices.items) |option_index, i| {
+        var i: usize = self.selected_option;
+        while (i < self.filtered_option_indices.items.len) : (i += 1) {
+            const option_index = self.filtered_option_indices.items[i];
             const option = self.options.items[option_index];
+
             text_y -= char_height;
 
             if (self.selected_option == i) {
-                renderer.setColor(color_scheme.getFace(.border).background);
+                renderer.setColor(color_scheme.getFace(.selection).background);
                 try renderer.drawRect(.{
                     .w = compl_rect.w,
                     .h = char_height,

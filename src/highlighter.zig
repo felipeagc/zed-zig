@@ -18,6 +18,7 @@ pub const Face = struct {
 
 pub const FaceType = enum {
     default,
+    selection,
     border,
     status_line,
     status_line_focused,
@@ -62,47 +63,14 @@ pub const ColorScheme = struct {
             try std.fmt.parseUnsigned(u8, str[5..7], 16),
         };
     }
-
-    pub fn defaultDark(allocator: *Allocator) !ColorScheme {
-        return comptime try ColorScheme.init(
-            [_]FaceDesc{
-                // default:
-                .{ .foreground = "#ffffff", .background = "#0c151b" },
-                // border:
-                .{ .foreground = "#303030", .background = "#303030" },
-                // status_line:
-                .{ .foreground = "#d4f0ff", .background = "#303030" },
-                // status_line_focused:
-                .{ .foreground = "#0c151b", .background = "#87d7ff" },
-                // keyword:
-                .{ .foreground = "#d4f0ff" },
-                // type:
-                .{ .foreground = "#87d7ff" },
-                // constant:
-                .{ .foreground = "#70c0b1" },
-                // comment:
-                .{ .foreground = "#808080" },
-                // preprocessor:
-                .{ .foreground = "#b5bd68" },
-                // string:
-                .{ .foreground = "#e7c547" },
-                // label:
-                .{ .foreground = "#70c0b1" },
-                // punctuation:
-                .{ .foreground = "#ffffff" },
-                // operator:
-                .{ .foreground = "#d4f0ff" },
-                // function:
-                .{ .foreground = "#b5bd68" },
-            },
-        );
-    }
     
     pub fn jellybeansTheme(allocator: *Allocator) !ColorScheme {
         return comptime try ColorScheme.init(
             [_]FaceDesc{
                 // default:
                 .{ .foreground = "#e8e8d3", .background = "#151515" },
+                // selection:
+                .{ .foreground = "#e8e8d3", .background = "#4f6da6" },
                 // border:
                 .{ .foreground = "#403c41", .background = "#403c41" },
                 // status_line:
