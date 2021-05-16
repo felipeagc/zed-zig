@@ -33,6 +33,9 @@ pub const WaylandWindowSystem = struct {
     pointer: ?*wl.Pointer = null,
     keyboard: ?*wl.Keyboard = null,
 
+    data_device_manager: ?*wl.DataDeviceManager = null,
+    data_device: ?*wl.DataDevice = null,
+
     cursor_theme: ?*wl.CursorTheme = null,
     cursor_left_ptr: ?Cursor = null,
 
@@ -51,6 +54,8 @@ pub const WaylandWindowSystem = struct {
     event_queue: [4096]Event = undefined,
     event_queue_head: usize = 0,
     event_queue_tail: usize = 0,
+
+    clipboard_content: std.ArrayList(u8),
 
     window_system: WindowSystem,
 
@@ -118,12 +123,15 @@ pub const WaylandWindowSystem = struct {
             .xkb_context = xkb_context,
             .xkb_compose_table = xkb_compose_table,
             .xkb_compose_state = xkb_compose_state,
+            .clipboard_content = std.ArrayList(u8).init(allocator),
 
             .window_system = WindowSystem{
                 .deinit_fn = deinit,
                 .next_event_fn = nextEvent,
                 .poll_events_fn = pollEvents,
                 .wait_events_fn = waitEvents,
+                .get_clipboard_content_alloc_fn = getClipboardContentAlloc,
+                .set_clipboard_content_fn = setClipboardContent,
                 .gl_swap_interval_fn = glSwapInterval,
 
                 .create_window_fn = WaylandWindow.init,
@@ -163,9 +171,13 @@ pub const WaylandWindowSystem = struct {
         if (self.decoration_manager) |decoration_manager| {
             decoration_manager.destroy();
         }
+        if (self.data_device) |data_device| {
+            data_device.release();
+        }
         if (self.wm_base) |wm_base| {
             wm_base.destroy();
         }
+        self.clipboard_content.deinit();
         self.display.disconnect();
         self.allocator.destroy(self);
     }
@@ -196,18 +208,47 @@ pub const WaylandWindowSystem = struct {
                 } else if (std.cstr.cmp(global.interface, wl.Seat.getInterface().name) == 0) {
                     window_system.seat = registry.bind(global.name, wl.Seat, 4) catch return;
                     window_system.seat.?.setListener(*WaylandWindowSystem, seatListener, window_system);
+                } else if (std.cstr.cmp(global.interface, wl.DataDeviceManager.getInterface().name) == 0) {
+                    window_system.data_device_manager = registry.bind(global.name, wl.DataDeviceManager, 3) catch return;
+                }
+
+                if (window_system.data_device == null) {
+                    if (window_system.data_device_manager) |data_device_manager| {
+                        if (window_system.seat) |seat| {
+                            const data_device = data_device_manager.getDataDevice(seat) catch |err| {
+                                std.log.err("failed to get data device: {}", .{err});
+                                return;
+                            };
+
+                            window_system.data_device = data_device;
+
+                            data_device.setListener(
+                                *WaylandWindowSystem,
+                                dataDeviceListener,
+                                window_system,
+                            );
+                        }
+                    }
                 }
             },
             .global_remove => {},
         }
     }
 
-    fn seatListener(seat: *wl.Seat, event: wl.Seat.Event, window_system: *WaylandWindowSystem) void {
+    fn seatListener(
+        seat: *wl.Seat,
+        event: wl.Seat.Event,
+        window_system: *WaylandWindowSystem,
+    ) void {
         switch (event) {
             .capabilities => |capability| {
                 if (capability.capabilities.pointer and window_system.pointer == null) {
                     window_system.pointer = seat.getPointer() catch return;
-                    window_system.pointer.?.setListener(*WaylandWindowSystem, pointerListener, window_system);
+                    window_system.pointer.?.setListener(
+                        *WaylandWindowSystem,
+                        pointerListener,
+                        window_system,
+                    );
                 }
                 if (!capability.capabilities.pointer and window_system.pointer != null) {
                     window_system.pointer.?.release();
@@ -216,7 +257,11 @@ pub const WaylandWindowSystem = struct {
 
                 if (capability.capabilities.keyboard and window_system.keyboard == null) {
                     window_system.keyboard = seat.getKeyboard() catch return;
-                    window_system.keyboard.?.setListener(*WaylandWindowSystem, keyboardListener, window_system);
+                    window_system.keyboard.?.setListener(
+                        *WaylandWindowSystem,
+                        keyboardListener,
+                        window_system,
+                    );
                 }
                 if (!capability.capabilities.keyboard and window_system.keyboard != null) {
                     window_system.keyboard.?.release();
@@ -227,7 +272,65 @@ pub const WaylandWindowSystem = struct {
         }
     }
 
-    fn pointerListener(pointer: *wl.Pointer, event: wl.Pointer.Event, window_system: *WaylandWindowSystem) void {
+    fn dataOfferListener(
+        data_offer: *wl.DataOffer,
+        event: wl.DataOffer.Event,
+        window_system: *WaylandWindowSystem,
+    ) void {
+        switch (event) {
+            .offer => |offer| {},
+            else => {},
+        }
+    }
+
+    fn dataDeviceListener(
+        data_device: *wl.DataDevice,
+        event: wl.DataDevice.Event,
+        window_system: *WaylandWindowSystem,
+    ) void {
+        switch (event) {
+            .data_offer => |data_offer| {
+                data_offer.id.setListener(
+                    *WaylandWindowSystem,
+                    dataOfferListener,
+                    window_system,
+                );
+            },
+            .selection => |selection| {
+                if (selection.id == null) return;
+                var data_offer = selection.id.?;
+
+                defer data_offer.destroy();
+
+                const pipe_fds: [2]std.os.fd_t = std.os.pipe() catch return;
+                defer std.os.close(pipe_fds[0]);
+
+                data_offer.receive("text/plain;charset=utf-8", pipe_fds[1]);
+                std.os.close(pipe_fds[1]);
+
+                _ = window_system.display.roundtrip() catch {};
+
+                window_system.clipboard_content.shrinkRetainingCapacity(0);
+
+                var buf: [1024]u8 = undefined;
+                while (true) {
+                    const bytes_read = std.os.read(pipe_fds[0], &buf) catch return;
+                    if (bytes_read == 0) break;
+
+                    window_system.clipboard_content.appendSlice(
+                        buf[0..bytes_read],
+                    ) catch return;
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn pointerListener(
+        pointer: *wl.Pointer,
+        event: wl.Pointer.Event,
+        window_system: *WaylandWindowSystem,
+    ) void {
         switch (event) {
             .enter => |enter| {
                 const cursor: *Cursor = &window_system.cursor_left_ptr.?;
@@ -607,6 +710,25 @@ pub const WaylandWindowSystem = struct {
 
             std.time.sleep(1_000_000);
         }
+    }
+
+    fn getClipboardContentAlloc(
+        window_system: *WindowSystem,
+        allocator: *Allocator,
+    ) anyerror!?[]const u8 {
+        var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
+        if (self.clipboard_content.items.len > 0) {
+            return try allocator.dupe(u8, self.clipboard_content.items);
+        } else {
+            return null;
+        }
+    }
+
+    fn setClipboardContent(
+        window_system: *WindowSystem,
+        content: []const u8,
+    ) anyerror!void {
+        var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
     }
 
     fn glSwapInterval(window_system: *WindowSystem, interval: i32) void {

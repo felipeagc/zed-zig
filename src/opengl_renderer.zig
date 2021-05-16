@@ -659,7 +659,8 @@ pub fn getClipboardString(allocator: *Allocator) callconv(.Inline) !?[]const u8 
     // if (maybe_c_str) |c_str| {
     //     return try allocator.dupe(u8, mem.spanZ(c_str));
     // }
-    return null;
+
+    return g_renderer.window_system.getClipboardContentAlloc(allocator);
 }
 
 pub fn setClipboardString(str: []const u8) callconv(.Inline) !void {

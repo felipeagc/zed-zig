@@ -40,6 +40,14 @@ pub const WindowSystem = struct {
     next_event_fn: fn (self: *WindowSystem) ?Event,
     poll_events_fn: fn (self: *WindowSystem) anyerror!void,
     wait_events_fn: fn (self: *WindowSystem, timeout_ns: ?u64) anyerror!void,
+    get_clipboard_content_alloc_fn: fn (
+        self: *WindowSystem,
+        allocator: *Allocator,
+    ) anyerror!?[]const u8,
+    set_clipboard_content_fn: fn (
+        self: *WindowSystem,
+        content: []const u8,
+    ) anyerror!void,
     gl_swap_interval_fn: fn (self: *WindowSystem, interval: i32) void,
 
     create_window_fn: fn (
@@ -93,6 +101,20 @@ pub const WindowSystem = struct {
             height,
             options,
         );
+    }
+
+    pub fn getClipboardContentAlloc(
+        self: *WindowSystem,
+        allocator: *Allocator,
+    ) !?[]const u8 {
+        return self.get_clipboard_content_alloc_fn(self, allocator);
+    }
+
+    pub fn setClipboardContent(
+        self: *WindowSystem,
+        content: []const u8,
+    ) !void {
+        return self.set_clipboard_content_fn(self, content);
     }
 };
 
