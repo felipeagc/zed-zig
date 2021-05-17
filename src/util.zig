@@ -158,3 +158,69 @@ pub const Walker = struct {
         }
     }
 };
+
+pub fn Channel(comptime T: type, comptime N: usize) type {
+    return struct {
+        const Self = @This();
+
+        queue: [N]T = undefined,
+        queue_head: usize = 0,
+        queue_tail: usize = 0,
+        mutex: std.Thread.Mutex = .{},
+        cond: std.Thread.Condition = .{},
+
+        fn queuePush(self: *Self, item: T) !void {
+            var item_ptr = &self.queue[self.queue_head];
+            const new_head = (self.queue_head + 1) % self.queue.len;
+            if (new_head == self.queue_tail) {
+                return error.ChannelQueueFull;
+            }
+            self.queue_head = new_head;
+            item_ptr.* = item;
+        }
+
+        fn queuePop(self: *Self) ?T {
+            if (self.queue_head != self.queue_tail) {
+                const event = self.queue[self.queue_tail];
+                self.queue_tail = (self.queue_tail + 1) % self.queue.len;
+                return event;
+            }
+            return null;
+        }
+
+        pub fn send(self: *Self, item: T) !void {
+            const lock = self.mutex.acquire();
+            defer lock.release();
+
+            try self.queuePush(item);
+
+            // Signal new queue item
+            self.cond.signal();
+        }
+
+        pub fn receiveOrNull(self: *Self) ?T {
+            const lock = self.mutex.acquire();
+
+            const item = self.queuePop();
+
+            self.cond.signal();
+            lock.release();
+            return item;
+        }
+
+        pub fn receive(self: *Self) T {
+            const lock = self.mutex.acquire();
+
+            while (self.queue_head == self.queue_tail) {
+                self.cond.wait(&self.mutex);
+            }
+
+            const item = self.queuePop().?;
+
+            self.cond.signal();
+            lock.release();
+
+            return item;
+        }
+    };
+}

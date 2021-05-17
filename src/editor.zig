@@ -34,6 +34,20 @@ pub const KeyResult = enum {
     command,
 };
 
+pub const TaskReq = union(enum) {
+    run_command: struct {
+        command: []const u8,
+    },
+    quit: void,
+};
+
+pub const TaskResp = union(enum) {
+    run_command: struct {
+        stdout: []const u8,
+        stderr: []const u8,
+    },
+};
+
 const Editor = struct {
     allocator: *Allocator,
     options: EditorOptions,
@@ -55,6 +69,10 @@ const Editor = struct {
     filetypes: std.StringArrayHashMap(*FileType),
     filetype_extensions: std.StringArrayHashMap(*FileType),
     buffers: std.ArrayList(*Buffer),
+
+    task_req_channel: util.Channel(TaskReq, 1024) = .{},
+    task_resp_channel: util.Channel(TaskResp, 1024) = .{},
+    task_threads: [4]*std.Thread,
 };
 
 pub const PanelVT = struct {
@@ -288,9 +306,32 @@ fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
     removed_panel.deinit();
 
     if (g_editor.panels.items.len > 0) {
-        g_editor.selected_panel = std.math.min(g_editor.selected_panel, g_editor.panels.items.len - 1);
+        g_editor.selected_panel = std.math.min(
+            g_editor.selected_panel,
+            g_editor.panels.items.len - 1,
+        );
     } else {
         g_editor.selected_panel = 0;
+    }
+}
+
+fn taskRunner(_: void) void {
+    outer: while (true) {
+        const task_req = g_editor.task_req_channel.receive();
+        switch (task_req) {
+            .run_command => |req| {
+                std.log.info("Running command: {s}", .{req.command});
+                g_editor.task_resp_channel.send(.{
+                    .run_command = .{
+                        .stdout = "",
+                        .stderr = "",
+                    },
+                }) catch |err| {
+                    std.log.err("failed to send task response: {}", .{err});
+                };
+            },
+            .quit => break :outer,
+        }
     }
 }
 
@@ -308,7 +349,7 @@ pub fn init(allocator: *Allocator) !void {
         .allocator = allocator,
 
         .options = .{
-            .main_font = try renderer.Font.init("Cascadia Code", "regular"),
+            .main_font = try renderer.Font.init("JetBrains Mono", "semibold"),
         },
 
         .panel_vts = std.ArrayList(*const PanelVT).init(allocator),
@@ -328,7 +369,13 @@ pub fn init(allocator: *Allocator) !void {
         .buffers = std.ArrayList(*Buffer).init(allocator),
         .filetypes = std.StringArrayHashMap(*FileType).init(allocator),
         .filetype_extensions = std.StringArrayHashMap(*FileType).init(allocator),
+
+        .task_threads = undefined,
     };
+
+    for (g_editor.task_threads) |*task_thread| {
+        task_thread.* = try std.Thread.spawn(taskRunner, {});
+    }
 
     try registerPanelVT(&@import("buffer_panel.zig").VT);
 
@@ -433,6 +480,15 @@ pub fn init(allocator: *Allocator) !void {
 }
 
 pub fn deinit() void {
+    for (g_editor.task_threads) |task_thread| {
+        g_editor.task_req_channel.send(.quit) catch |err| {
+            std.log.err("failed to send quit task to task runner: {}", .{err});
+        };
+    }
+    for (g_editor.task_threads) |task_thread| {
+        task_thread.wait();
+    }
+
     for (g_editor.panels.items) |panel| {
         panel.deinit();
     }
