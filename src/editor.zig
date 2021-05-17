@@ -320,19 +320,59 @@ fn taskRunner(_: void) void {
         const task_req = g_editor.task_req_channel.receive();
         switch (task_req) {
             .run_command => |req| {
+                defer g_editor.allocator.free(req.command);
+
                 std.log.info("Running command: {s}", .{req.command});
-                g_editor.task_resp_channel.send(.{
-                    .run_command = .{
-                        .stdout = "",
-                        .stderr = "",
-                    },
-                }) catch |err| {
-                    std.log.err("failed to send task response: {}", .{err});
-                };
+
+                var stdout: []const u8 = "";
+                var stderr: []const u8 = "";
+
+                const run_result = util.runCommandAlloc(g_editor.allocator, .{
+                    .command = req.command,
+                    .stdin_text = null,
+                    .stdout_text = &stdout,
+                    .stderr_text = &stderr,
+                });
+
+                if (run_result) {
+                    defer if (stdout.len > 0) g_editor.allocator.free(stdout);
+                    defer if (stderr.len > 0) g_editor.allocator.free(stderr);
+
+                    std.log.info("Finished running: {s}", .{req.command});
+
+                    if (stdout.len > 0) {
+                        std.debug.print("{s}", .{stdout});
+                    }
+
+                    if (stderr.len > 0) {
+                        std.debug.print("{s}", .{stderr});
+                    }
+                } else |err| {
+                    std.log.err("failed to run command: {}", .{err});
+                }
+
+                // g_editor.task_resp_channel.send(.{
+                //     .run_command = .{
+                //         .stdout = "",
+                //         .stderr = "",
+                //     },
+                // }) catch |err| {
+                //     std.log.err("failed to send task response: {}", .{err});
+                // };
             },
             .quit => break :outer,
         }
     }
+}
+
+fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
+    const command: []const u8 = "zig build";
+    const command_dupe = try g_editor.allocator.dupe(u8, command);
+    try g_editor.task_req_channel.send(.{
+        .run_command = .{
+            .command = command_dupe,
+        },
+    });
 }
 
 pub fn init(allocator: *Allocator) !void {
@@ -453,6 +493,8 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind("<space> w /", commandNewSplit);
     try g_editor.global_keymap.bind("<space> w d", commandCloseSplit);
+
+    try g_editor.global_keymap.bind("<f7>", buildProject);
 
     try g_editor.global_commands.register("vsp", commandNewSplit);
     try g_editor.global_commands.register("q", commandCloseSplit);

@@ -49,4 +49,3 @@ pub fn main() anyerror!void {
 
     editor.mainLoop();
 }
-

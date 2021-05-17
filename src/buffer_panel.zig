@@ -2127,56 +2127,29 @@ pub const BufferPanel = struct {
         const content = try self.buffer.getEntireContent(self.allocator);
         defer self.allocator.free(content);
 
-        var args = std.ArrayList([]const u8).init(self.allocator);
-        defer args.deinit();
+        var stdout: []const u8 = "";
+        var stderr: []const u8 = "";
 
-        if (builtin.os.tag != .windows) {
-            try args.append("/usr/bin/env");
+        try util.runCommandAlloc(self.allocator, .{
+            .command = command,
+            .stdin_text = content,
+            .stdout_text = &stdout,
+            .stderr_text = &stderr,
+        });
+
+        defer if (stdout.len > 0) self.allocator.free(stdout);
+        defer if (stderr.len > 0) self.allocator.free(stderr);
+
+        if (stderr.len > 0) {
+            std.log.err("formatter error: {s}", .{stderr});
         }
 
-        var iter = mem.split(command, " ");
-        while (iter.next()) |part| {
-            try args.append(part);
-        }
-
-        if (args.items.len == 0) {
-            return error.InvalidFormatterCommand;
-        }
-
-        var proc = try std.ChildProcess.init(args.items, self.allocator);
-        defer proc.deinit();
-
-        proc.stdin_behavior = .Pipe;
-        proc.stderr_behavior = .Pipe;
-        proc.stdout_behavior = .Pipe;
-
-        try proc.spawn();
-
-        var writer = proc.stdin.?.writer();
-        try writer.writeAll(content);
-        proc.stdin.?.close();
-        proc.stdin = null;
-
-        var reader = proc.stdout.?.reader();
-        const formatted_content = try reader.readAllAlloc(self.allocator, content.len * 2);
-        defer self.allocator.free(formatted_content);
-
-        var err_reader = proc.stderr.?.reader();
-        const error_content = try err_reader.readAllAlloc(self.allocator, 1024 * 16);
-        defer self.allocator.free(error_content);
-
-        _ = try proc.wait();
-
-        if (error_content.len > 0) {
-            std.log.err("formatter error: {s}", .{error_content});
-        }
-
-        if (formatted_content.len > 0) {
+        if (stdout.len > 0) {
             self.beginCheckpoint();
             defer self.endCheckpoint();
 
             try self.buffer.delete(0, 0, content.len);
-            try self.buffer.insert(0, 0, formatted_content);
+            try self.buffer.insert(0, 0, stdout);
         }
     }
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const renderer = @import("opengl_renderer.zig");
 const Regex = @import("regex.zig").Regex;
 const mem = std.mem;
@@ -223,4 +224,64 @@ pub fn Channel(comptime T: type, comptime N: usize) type {
             return item;
         }
     };
+}
+
+pub fn runCommandAlloc(
+    allocator: *Allocator,
+    options: struct {
+        command: []const u8,
+        stdin_text: ?[]const u8,
+        stdout_text: ?*[]const u8,
+        stderr_text: ?*[]const u8,
+    },
+) !void {
+    var args = std.ArrayList([]const u8).init(allocator);
+    defer args.deinit();
+
+    if (builtin.os.tag != .windows) {
+        try args.append("/usr/bin/env");
+    }
+
+    var iter = mem.split(options.command, " ");
+    while (iter.next()) |part| {
+        try args.append(part);
+    }
+
+    if (args.items.len == 0) {
+        return error.InvalidRunCommand;
+    }
+
+    var proc = try std.ChildProcess.init(args.items, allocator);
+    defer proc.deinit();
+
+    proc.stdin_behavior = if (options.stdin_text == null) .Ignore else .Pipe;
+    proc.stdout_behavior = if (options.stdout_text == null) .Ignore else .Pipe;
+    proc.stderr_behavior = if (options.stderr_text == null) .Ignore else .Pipe;
+
+    try proc.spawn();
+
+    if (options.stdin_text) |stdin_text| {
+        var writer = proc.stdin.?.writer();
+        try writer.writeAll(stdin_text);
+        proc.stdin.?.close();
+        proc.stdin = null;
+    }
+
+    if (options.stdout_text) |stdout_text| {
+        var out_reader = proc.stdout.?.reader();
+        stdout_text.* = try out_reader.readAllAlloc(allocator, std.math.max(
+            if (options.stdin_text) |stdin_text| (stdin_text.len * 2) else 0,
+            1024 * 64,
+        ));
+    }
+
+    if (options.stderr_text) |stderr_text| {
+        var err_reader = proc.stderr.?.reader();
+        stderr_text.* = try err_reader.readAllAlloc(allocator, std.math.max(
+            if (options.stdin_text) |stdin_text| (stdin_text.len * 2) else 0,
+            1024 * 64,
+        ));
+    }
+
+    _ = try proc.wait();
 }
