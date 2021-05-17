@@ -642,7 +642,7 @@ pub fn endFrame() !void {
             std.log.err("pollEvents error: {}", .{err});
         };
     } else {
-        g_renderer.window_system.waitEvents(null) catch |err| {
+        g_renderer.window_system.waitEvents() catch |err| {
             std.log.err("waitEvents error: {}", .{err});
         };
     }

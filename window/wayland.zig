@@ -53,6 +53,8 @@ pub const WaylandWindowSystem = struct {
     xkb_state: ?*c.struct_xkb_state = null,
 
     queue_mutex: std.Thread.Mutex = .{},
+    event_write_fd: std.os.fd_t,
+    event_read_fd: std.os.fd_t,
     event_queue: [4096]Event = undefined,
     event_queue_head: usize = 0,
     event_queue_tail: usize = 0,
@@ -118,6 +120,8 @@ pub const WaylandWindowSystem = struct {
             .XKB_COMPOSE_STATE_NO_FLAGS,
         ) orelse return error.XkbInitError;
 
+        const event_fds = try std.os.pipe();
+
         self.* = WaylandWindowSystem{
             .allocator = allocator,
             .display = display,
@@ -126,6 +130,9 @@ pub const WaylandWindowSystem = struct {
             .xkb_compose_table = xkb_compose_table,
             .xkb_compose_state = xkb_compose_state,
             .clipboard_content = std.ArrayList(u8).init(allocator),
+
+            .event_read_fd = event_fds[0],
+            .event_write_fd = event_fds[1],
 
             .window_system = WindowSystem{
                 .deinit_fn = deinit,
@@ -152,6 +159,9 @@ pub const WaylandWindowSystem = struct {
 
     fn deinit(window_system: *WindowSystem) void {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
+
+        std.os.close(self.event_read_fd);
+        std.os.close(self.event_write_fd);
 
         if (self.cursor_left_ptr) |*ptr| {
             ptr.deinit();
@@ -197,7 +207,11 @@ pub const WaylandWindowSystem = struct {
         }
     }
 
-    fn registryListener(registry: *wl.Registry, event: wl.Registry.Event, window_system: *WaylandWindowSystem) void {
+    fn registryListener(
+        registry: *wl.Registry,
+        event: wl.Registry.Event,
+        window_system: *WaylandWindowSystem,
+    ) void {
         switch (event) {
             .global => |global| {
                 if (std.cstr.cmp(global.interface, wl.Compositor.getInterface().name) == 0) {
@@ -570,6 +584,8 @@ pub const WaylandWindowSystem = struct {
         const lock = self.queue_mutex.acquire();
         defer lock.release();
 
+        _ = try std.os.write(self.event_write_fd, &[_]u8{0});
+
         var event_ptr = &self.event_queue[self.event_queue_head];
         const new_head = (self.event_queue_head + 1) % self.event_queue.len;
         if (new_head == self.event_queue_tail) {
@@ -720,7 +736,7 @@ pub const WaylandWindowSystem = struct {
         }
     }
 
-    fn pumpEvents(self: *WaylandWindowSystem) !void {
+    fn pumpEvents(self: *WaylandWindowSystem, block: bool) !void {
         _ = try self.display.flush();
 
         var fds = [_]std.os.linux.pollfd{
@@ -729,11 +745,35 @@ pub const WaylandWindowSystem = struct {
                 .events = std.os.linux.POLLIN | std.os.linux.POLLPRI,
                 .revents = 0,
             },
+            .{
+                .fd = self.event_read_fd,
+                .events = std.os.linux.POLLIN | std.os.linux.POLLPRI,
+                .revents = 0,
+            },
         };
 
-        if ((try std.os.poll(&fds, 0)) > 0) {
+        const timeout: i32 = if (self.repeat_timer) |repeat_timer| blk: {
+            const initial_delay = self.repeat_delay;
+            const rate_delay = @divTrunc(1000, self.repeat_rate);
+
+            const min_delay = std.math.min(initial_delay, rate_delay);
+
+            const timer_millis = @intCast(i32, repeat_timer.read() / 1_000_000);
+
+            break :blk @rem(timer_millis, min_delay);
+        } else -1;
+
+        if ((try std.os.poll(&fds, timeout)) > 0) {
             // fd available for reading
-            _ = try self.display.dispatch();
+
+            if (fds[1].revents != 0) {
+                var dummy_buf = [1]u8{0};
+                _ = std.os.read(self.event_read_fd, &dummy_buf) catch 0;
+            }
+
+            if (fds[0].revents != 0) {
+                _ = try self.display.dispatch();
+            }
         } else {
             _ = try self.display.dispatchPending();
         }
@@ -743,31 +783,25 @@ pub const WaylandWindowSystem = struct {
 
     fn pollEvents(window_system: *WindowSystem) anyerror!void {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
-        try self.pumpEvents();
+        try self.pumpEvents(false);
     }
 
     // Timeout in nanoseconds
-    fn waitEvents(window_system: *WindowSystem, maybe_timeout: ?u64) anyerror!void {
+    fn waitEvents(window_system: *WindowSystem) anyerror!void {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
-        var timer = try std.time.Timer.start();
 
         while (true) {
-            _ = try self.pumpEvents();
+            _ = try self.pumpEvents(true);
 
             {
                 const lock = self.queue_mutex.acquire();
                 defer lock.release();
 
+                // Check if there's new events
                 if (self.event_queue_head != self.event_queue_tail) {
                     break;
                 }
             }
-
-            if (maybe_timeout) |timeout| {
-                if (timeout > timer.read()) break;
-            }
-
-            std.time.sleep(1_000_000);
         }
     }
 

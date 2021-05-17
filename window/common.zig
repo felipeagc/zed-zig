@@ -40,7 +40,7 @@ pub const WindowSystem = struct {
     deinit_fn: fn (self: *WindowSystem) void,
     next_event_fn: fn (self: *WindowSystem) ?Event,
     poll_events_fn: fn (self: *WindowSystem) anyerror!void,
-    wait_events_fn: fn (self: *WindowSystem, timeout_ns: ?u64) anyerror!void,
+    wait_events_fn: fn (self: *WindowSystem) anyerror!void,
     push_event_fn: fn (self: *WindowSystem, event: Event) anyerror!void,
     get_clipboard_content_alloc_fn: fn (
         self: *WindowSystem,
@@ -83,8 +83,8 @@ pub const WindowSystem = struct {
         return self.poll_events_fn(self);
     }
 
-    pub fn waitEvents(self: *WindowSystem, timeout_ns: ?u64) anyerror!void {
-        return self.wait_events_fn(self, timeout_ns);
+    pub fn waitEvents(self: *WindowSystem) anyerror!void {
+        return self.wait_events_fn(self);
     }
 
     pub fn pushEvent(self: *WindowSystem, event: Event) anyerror!void {
