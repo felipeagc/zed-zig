@@ -13,6 +13,7 @@ const win = @import("window");
 const mem = std.mem;
 
 const SCRATCH_BUFFER_NAME = "** scratch **";
+const BUILD_BUFFER_NAME = "** build **";
 const MESSAGES_BUFFER_NAME = "** messages **";
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
@@ -296,7 +297,7 @@ fn commandNewSplit(panel: *Panel, args: [][]const u8) anyerror!void {
         g_editor.selected_panel + 1,
         try BufferPanel.init(
             g_editor.allocator,
-            try getScratchBuffer(),
+            try getNamedBuffer(SCRATCH_BUFFER_NAME),
         ),
     );
 }
@@ -376,6 +377,24 @@ fn taskRunner(_: void) void {
 fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
     const command: []const u8 = "zig build";
     const command_dupe = try g_editor.allocator.dupe(u8, command);
+
+    const build_buffer = try getNamedBuffer(BUILD_BUFFER_NAME);
+
+    const build_message = try std.fmt.allocPrint(
+        g_editor.allocator,
+        "Starting build: {s}\n",
+        .{command},
+    );
+    defer g_editor.allocator.free(build_message);
+
+    try build_buffer.clearContent();
+    try build_buffer.insert(0, 0, build_message);
+
+    try g_editor.panels.insert(
+        g_editor.selected_panel + 1,
+        try BufferPanel.init(g_editor.allocator, build_buffer),
+    );
+
     try g_editor.task_req_channel.send(.{
         .run_build = .{
             .command = command_dupe,
@@ -624,54 +643,31 @@ pub fn addBufferFromFile(path: []const u8) !*Buffer {
     return buffer;
 }
 
-pub fn getScratchBuffer() !*Buffer {
+pub fn getNamedBuffer(name: []const u8) !*Buffer {
     const allocator = g_editor.allocator;
 
     for (g_editor.buffers.items) |buffer| {
-        if (mem.eql(u8, buffer.name, SCRATCH_BUFFER_NAME)) {
+        if (mem.eql(u8, buffer.name, name)) {
             return buffer;
         }
     }
 
-    const scratch_buffer = try Buffer.initWithContent(
+    const buffer = try Buffer.initWithContent(
         allocator,
         "",
         .{
-            .name = SCRATCH_BUFFER_NAME,
+            .name = name,
             .filetype = getFileType("default"),
         },
     );
 
-    try g_editor.buffers.append(scratch_buffer);
+    try g_editor.buffers.append(buffer);
 
-    return scratch_buffer;
-}
-
-pub fn getMessagesBuffer() !*Buffer {
-    const allocator = g_editor.allocator;
-
-    for (g_editor.buffers.items) |buffer| {
-        if (mem.eql(u8, buffer.name, MESSAGES_BUFFER_NAME)) {
-            return buffer;
-        }
-    }
-
-    const messages_buffer = try Buffer.initWithContent(
-        allocator,
-        "",
-        .{
-            .name = MESSAGES_BUFFER_NAME,
-            .filetype = getFileType("default"),
-        },
-    );
-
-    try g_editor.buffers.append(messages_buffer);
-
-    return messages_buffer;
+    return buffer;
 }
 
 pub fn logMessage(comptime fmt: []const u8, args: anytype) !void {
-    const messages_buffer = try getMessagesBuffer();
+    const messages_buffer = try getNamedBuffer(MESSAGES_BUFFER_NAME);
     const buf = try std.fmt.allocPrint(g_editor.allocator, fmt, args);
     defer g_editor.allocator.free(buf);
 
@@ -900,7 +896,9 @@ pub fn mainLoop() void {
         renderer.beginFrame() catch unreachable;
 
         if (g_editor.panels.items.len == 0) {
-            const scratch_buffer = getScratchBuffer() catch unreachable;
+            const scratch_buffer = getNamedBuffer(
+                SCRATCH_BUFFER_NAME,
+            ) catch unreachable;
 
             const panel = BufferPanel.init(
                 g_editor.allocator,
@@ -916,7 +914,19 @@ pub fn mainLoop() void {
             switch (resp) {
                 .build_finished => |build_finished| {
                     defer g_editor.allocator.free(build_finished.output);
-                    std.debug.print("{s}", .{build_finished.output});
+
+                    if (getNamedBuffer(BUILD_BUFFER_NAME)) |build_buffer| {
+                        build_buffer.clearContent() catch continue;
+                        build_buffer.insert(0, 0, build_finished.output) catch continue;
+
+                        if (build_finished.success) {
+                            build_buffer.insert(0, 0, "Build success!\n\n") catch continue;
+                        } else {
+                            build_buffer.insert(0, 0, "Build failed!\n\n") catch continue;
+                        }
+                    } else |err| {
+                        std.log.err("failed to get build buffer: {}", .{err});
+                    }
                 },
             }
         }

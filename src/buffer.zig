@@ -190,7 +190,7 @@ pub const Buffer = struct {
 
             std.log.info("Wrote: {s}", .{path});
         } else {
-            return error.BufferNoPathSpecified;
+            return error.BufferPathNotSpecified;
         }
     }
 
@@ -427,6 +427,22 @@ pub const Buffer = struct {
             codepoint_length,
             .{ .save_history = true },
         );
+    }
+
+    pub fn clearContent(self: *@This()) !void {
+        const line_count = self.getLineCount();
+        const last_line_index = if (line_count > 0) line_count - 1 else 0;
+        const last_line = try self.getLine(last_line_index);
+        const last_line_columns = try std.unicode.utf8CountCodepoints(last_line);
+
+        const codepoint_distance = try self.getCodepointDistance(
+            0,
+            0,
+            last_line_index,
+            last_line_columns,
+        );
+
+        try self.delete(0, 0, codepoint_distance);
     }
 
     pub fn getEntireContent(self: *@This(), allocator: *Allocator) ![]const u8 {
