@@ -42,8 +42,10 @@ fn codepointToCharClass(codepoint: u32) CharClass {
 }
 
 fn positionIsBetween(pos: Position, start: Position, end: Position) bool {
-    const is_after_start = pos.line > start.line or (start.line == pos.line and pos.column >= start.column);
-    const is_before_end = pos.line < end.line or (pos.line == end.line and pos.column <= end.column);
+    const is_after_start = pos.line > start.line or
+        (start.line == pos.line and pos.column >= start.column);
+    const is_before_end = pos.line < end.line or
+        (pos.line == end.line and pos.column <= end.column);
     return is_after_start and is_before_end;
 }
 
@@ -2130,7 +2132,7 @@ pub const BufferPanel = struct {
         var stdout: []const u8 = "";
         var stderr: []const u8 = "";
 
-        try util.runCommandAlloc(self.allocator, .{
+        const term = try util.runCommandAlloc(self.allocator, .{
             .command = command,
             .stdin_text = content,
             .stdout_text = &stdout,
@@ -2140,16 +2142,16 @@ pub const BufferPanel = struct {
         defer if (stdout.len > 0) self.allocator.free(stdout);
         defer if (stderr.len > 0) self.allocator.free(stderr);
 
-        if (stderr.len > 0) {
-            std.log.err("formatter error: {s}", .{stderr});
-        }
+        const success = (term == .Exited and term.Exited == 0);
 
-        if (stdout.len > 0) {
+        if (success) {
             self.beginCheckpoint();
             defer self.endCheckpoint();
 
             try self.buffer.delete(0, 0, content.len);
             try self.buffer.insert(0, 0, stdout);
+        } else {
+            std.log.err("formatter error: {s}", .{stderr});
         }
     }
 

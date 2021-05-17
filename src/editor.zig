@@ -35,16 +35,16 @@ pub const KeyResult = enum {
 };
 
 pub const TaskReq = union(enum) {
-    run_command: struct {
+    run_build: struct {
         command: []const u8,
     },
     quit: void,
 };
 
 pub const TaskResp = union(enum) {
-    run_command: struct {
-        stdout: []const u8,
-        stderr: []const u8,
+    build_finished: struct {
+        success: bool,
+        output: []const u8,
     },
 };
 
@@ -318,11 +318,11 @@ fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
 fn taskRunner(_: void) void {
     outer: while (true) {
         const task_req = g_editor.task_req_channel.receive();
-        switch (task_req) {
-            .run_command => |req| {
-                defer g_editor.allocator.free(req.command);
+        defer renderer.pushEvent(.dummy);
 
-                std.log.info("Running command: {s}", .{req.command});
+        switch (task_req) {
+            .run_build => |req| {
+                defer g_editor.allocator.free(req.command);
 
                 var stdout: []const u8 = "";
                 var stderr: []const u8 = "";
@@ -334,31 +334,39 @@ fn taskRunner(_: void) void {
                     .stderr_text = &stderr,
                 });
 
-                if (run_result) {
-                    defer if (stdout.len > 0) g_editor.allocator.free(stdout);
-                    defer if (stderr.len > 0) g_editor.allocator.free(stderr);
+                if (run_result) |term| {
+                    const success = (term == .Exited and term.Exited == 0);
 
-                    std.log.info("Finished running: {s}", .{req.command});
-
-                    if (stdout.len > 0) {
-                        std.debug.print("{s}", .{stdout});
+                    if (success) {
+                        if (stderr.len > 0) g_editor.allocator.free(stderr);
+                    } else {
+                        if (stdout.len > 0) g_editor.allocator.free(stdout);
                     }
 
-                    if (stderr.len > 0) {
-                        std.debug.print("{s}", .{stderr});
-                    }
+                    g_editor.task_resp_channel.send(.{
+                        .build_finished = .{
+                            .success = success,
+                            .output = if (success) stdout else stderr,
+                        },
+                    }) catch |err| {
+                        std.log.err("failed to send task response: {}", .{err});
+                    };
                 } else |err| {
-                    std.log.err("failed to run command: {}", .{err});
-                }
+                    std.log.err("failed to run build command: {}", .{err});
 
-                // g_editor.task_resp_channel.send(.{
-                //     .run_command = .{
-                //         .stdout = "",
-                //         .stderr = "",
-                //     },
-                // }) catch |err| {
-                //     std.log.err("failed to send task response: {}", .{err});
-                // };
+                    g_editor.task_resp_channel.send(.{
+                        .build_finished = .{
+                            .success = false,
+                            .output = std.fmt.allocPrint(
+                                g_editor.allocator,
+                                "Failed to start command: {s}\n",
+                                .{req.command},
+                            ) catch unreachable,
+                        },
+                    }) catch |send_err| {
+                        std.log.err("failed to send task response: {}", .{send_err});
+                    };
+                }
             },
             .quit => break :outer,
         }
@@ -369,7 +377,7 @@ fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
     const command: []const u8 = "zig build";
     const command_dupe = try g_editor.allocator.dupe(u8, command);
     try g_editor.task_req_channel.send(.{
-        .run_command = .{
+        .run_build = .{
             .command = command_dupe,
         },
     });
@@ -890,7 +898,6 @@ const DirIterator = struct {
 pub fn mainLoop() void {
     while (!renderer.shouldClose()) {
         renderer.beginFrame() catch unreachable;
-        defer renderer.endFrame() catch unreachable;
 
         if (g_editor.panels.items.len == 0) {
             const scratch_buffer = getScratchBuffer() catch unreachable;
@@ -905,8 +912,19 @@ pub fn mainLoop() void {
             g_editor.selected_panel = 0;
         }
 
+        while (g_editor.task_resp_channel.receiveOrNull()) |resp| {
+            switch (resp) {
+                .build_finished => |build_finished| {
+                    defer g_editor.allocator.free(build_finished.output);
+                    std.debug.print("{s}", .{build_finished.output});
+                },
+            }
+        }
+
         draw() catch |err| {
             std.log.err("draw error: {}", .{err});
         };
+
+        defer renderer.endFrame() catch unreachable;
     }
 }

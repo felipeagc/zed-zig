@@ -653,6 +653,10 @@ pub fn requestRedraw() callconv(.Inline) void {
     g_renderer.should_redraw = true;
 }
 
+pub fn pushEvent(event: win.Event) void {
+    g_renderer.window_system.pushEvent(event) catch {};
+}
+
 pub fn getClipboardString(allocator: *Allocator) callconv(.Inline) !?[]const u8 {
     return g_renderer.window_system.getClipboardContentAlloc(allocator);
 }

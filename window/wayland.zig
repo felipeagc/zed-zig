@@ -52,6 +52,7 @@ pub const WaylandWindowSystem = struct {
     xkb_keymap: ?*c.struct_xkb_keymap = null,
     xkb_state: ?*c.struct_xkb_state = null,
 
+    queue_mutex: std.Thread.Mutex = .{},
     event_queue: [4096]Event = undefined,
     event_queue_head: usize = 0,
     event_queue_tail: usize = 0,
@@ -131,6 +132,7 @@ pub const WaylandWindowSystem = struct {
                 .next_event_fn = nextEvent,
                 .poll_events_fn = pollEvents,
                 .wait_events_fn = waitEvents,
+                .push_event_fn = pushEvent,
                 .get_clipboard_content_alloc_fn = getClipboardContentAlloc,
                 .set_clipboard_content_fn = setClipboardContent,
                 .gl_swap_interval_fn = glSwapInterval,
@@ -374,7 +376,7 @@ pub const WaylandWindowSystem = struct {
             },
             .leave => {},
             .motion => |motion| {
-                window_system.pushEvent(Event{
+                window_system.window_system.pushEvent(Event{
                     .mouse_motion = .{
                         .x = motion.surface_x.toInt(),
                         .y = motion.surface_y.toInt(),
@@ -408,7 +410,7 @@ pub const WaylandWindowSystem = struct {
                     else => {},
                 }
 
-                window_system.pushEvent(emit_event) catch |err| {
+                window_system.window_system.pushEvent(emit_event) catch |err| {
                     std.log.err("failed to push scroll event: {}", .{err});
                 };
             },
@@ -562,7 +564,12 @@ pub const WaylandWindowSystem = struct {
         }
     }
 
-    fn pushEvent(self: *WaylandWindowSystem, event: Event) !void {
+    fn pushEvent(window_system: *WindowSystem, event: Event) anyerror!void {
+        var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
+
+        const lock = self.queue_mutex.acquire();
+        defer lock.release();
+
         var event_ptr = &self.event_queue[self.event_queue_head];
         const new_head = (self.event_queue_head + 1) % self.event_queue.len;
         if (new_head == self.event_queue_tail) {
@@ -574,6 +581,9 @@ pub const WaylandWindowSystem = struct {
 
     fn nextEvent(window_system: *WindowSystem) ?Event {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
+
+        const lock = self.queue_mutex.acquire();
+        defer lock.release();
 
         if (self.event_queue_head != self.event_queue_tail) {
             const event = self.event_queue[self.event_queue_tail];
@@ -643,7 +653,7 @@ pub const WaylandWindowSystem = struct {
         mods: KeyMods,
         state: KeyState,
     ) void {
-        self.pushEvent(Event{
+        self.window_system.pushEvent(Event{
             .keyboard = .{
                 .key = key,
                 .mods = mods,
@@ -658,7 +668,7 @@ pub const WaylandWindowSystem = struct {
         switch (codepoint) {
             0...31 => {},
             else => {
-                self.pushEvent(Event{
+                self.window_system.pushEvent(Event{
                     .codepoint = .{
                         .codepoint = codepoint,
                     },
@@ -743,8 +753,14 @@ pub const WaylandWindowSystem = struct {
 
         while (true) {
             _ = try self.pumpEvents();
-            if (self.event_queue_head != self.event_queue_tail) {
-                break;
+
+            {
+                const lock = self.queue_mutex.acquire();
+                defer lock.release();
+
+                if (self.event_queue_head != self.event_queue_tail) {
+                    break;
+                }
             }
 
             if (maybe_timeout) |timeout| {
@@ -968,7 +984,7 @@ const WaylandWindow = struct {
                         egl_window.resize(configure.width, configure.height, 0, 0);
                     }
 
-                    window.window_system.pushEvent(Event{
+                    window.window_system.window_system.pushEvent(Event{
                         .window_resize = .{
                             .width = configure.width,
                             .height = configure.height,

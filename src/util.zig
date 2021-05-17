@@ -234,7 +234,7 @@ pub fn runCommandAlloc(
         stdout_text: ?*[]const u8,
         stderr_text: ?*[]const u8,
     },
-) !void {
+) !std.ChildProcess.Term {
     var args = std.ArrayList([]const u8).init(allocator);
     defer args.deinit();
 
@@ -283,5 +283,5 @@ pub fn runCommandAlloc(
         ));
     }
 
-    _ = try proc.wait();
+    return try proc.wait();
 }

@@ -11,6 +11,7 @@ pub const WindowOptions = struct {
 };
 
 pub const Event = union(enum) {
+    dummy: void,
     configure: void,
     window_resize: struct {
         width: i32,
@@ -40,6 +41,7 @@ pub const WindowSystem = struct {
     next_event_fn: fn (self: *WindowSystem) ?Event,
     poll_events_fn: fn (self: *WindowSystem) anyerror!void,
     wait_events_fn: fn (self: *WindowSystem, timeout_ns: ?u64) anyerror!void,
+    push_event_fn: fn (self: *WindowSystem, event: Event) anyerror!void,
     get_clipboard_content_alloc_fn: fn (
         self: *WindowSystem,
         allocator: *Allocator,
@@ -83,6 +85,10 @@ pub const WindowSystem = struct {
 
     pub fn waitEvents(self: *WindowSystem, timeout_ns: ?u64) anyerror!void {
         return self.wait_events_fn(self, timeout_ns);
+    }
+
+    pub fn pushEvent(self: *WindowSystem, event: Event) anyerror!void {
+        return self.push_event_fn(self, event);
     }
 
     pub fn glSwapInterval(self: *WindowSystem, interval: i32) void {
