@@ -75,7 +75,7 @@ pub const Buffer = struct {
     highlighted_line_count: usize = 0,
     highlighter_state: ?*HighlighterState = null,
     saved_generation: usize = 0,
-    current_generation: usize = 1,
+    current_generation: usize = 0,
     readonly: bool = false,
 
     pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
@@ -212,15 +212,14 @@ pub const Buffer = struct {
     }
 
     pub fn isModified(self: *Buffer) bool {
-        if (self.undo_stack.items.len == 0) return false;
+        if (self.undo_stack.items.len == 0) return self.saved_generation != 0;
         const op = self.undo_stack.items[self.undo_stack.items.len - 1];
         return op.generation != self.saved_generation;
     }
 
     fn nextGeneration(self: *Buffer) usize {
-        const gen = self.current_generation;
         self.current_generation +%= 1;
-        return gen;
+        return self.current_generation;
     }
 
     pub fn deinit(self: *@This()) void {
