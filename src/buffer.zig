@@ -54,10 +54,12 @@ const TextOp = struct {
 
 const TextOpOptions = struct {
     save_history: bool,
+    force: bool = false,
 };
 
 pub const BufferOptions = struct {
     filetype: *FileType,
+    readonly: bool = false,
     name: ?[]const u8 = null,
     path: ?[]const u8 = null,
 };
@@ -74,6 +76,7 @@ pub const Buffer = struct {
     highlighter_state: ?*HighlighterState = null,
     saved_generation: usize = 0,
     current_generation: usize = 1,
+    readonly: bool = false,
 
     pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
         var self = try allocator.create(@This());
@@ -87,6 +90,7 @@ pub const Buffer = struct {
                 allocator,
                 path,
             ) else null,
+            .readonly = options.readonly,
             .filetype = options.filetype,
         };
 
@@ -162,6 +166,8 @@ pub const Buffer = struct {
     }
 
     pub fn save(self: *@This()) !void {
+        if (self.readonly) return error.BufferIsReadOnly;
+
         if (self.absolute_path) |path| {
             try std.fs.deleteFileAbsolute(path);
 
@@ -267,6 +273,7 @@ pub const Buffer = struct {
         text: []const u8,
         comptime options: TextOpOptions,
     ) !void {
+        if (self.readonly and !options.force) return error.BufferIsReadOnly;
         if (text.len == 0) return;
 
         defer self.resetHighlighting(line_index) catch {};
@@ -350,6 +357,23 @@ pub const Buffer = struct {
         );
     }
 
+    pub fn insertForce(
+        self: *@This(),
+        line_index: usize,
+        column_index: usize,
+        text: []const u8,
+    ) !void {
+        return self.insertInternal(
+            line_index,
+            column_index,
+            text,
+            .{
+                .save_history = false,
+                .force = true,
+            },
+        );
+    }
+
     fn deleteInternal(
         self: *@This(),
         line_index: usize,
@@ -357,6 +381,7 @@ pub const Buffer = struct {
         codepoint_length: usize,
         comptime options: TextOpOptions,
     ) !void {
+        if (self.readonly and !options.force) return error.BufferIsReadOnly;
         if (codepoint_length == 0) return;
 
         const result = try self.getContentInternal(
@@ -425,11 +450,30 @@ pub const Buffer = struct {
             line_index,
             column_index,
             codepoint_length,
-            .{ .save_history = true },
+            .{ .save_history = false },
         );
     }
 
-    pub fn clearContent(self: *@This()) !void {
+    pub fn deleteForce(
+        self: *@This(),
+        line_index: usize,
+        column_index: usize,
+        codepoint_length: usize,
+    ) !void {
+        return self.deleteInternal(
+            line_index,
+            column_index,
+            codepoint_length,
+            .{ .save_history = true, .force = true },
+        );
+    }
+
+    fn clearContentInternal(
+        self: *@This(),
+        comptime options: TextOpOptions,
+    ) !void {
+        if (self.readonly and !options.force) return error.BufferIsReadOnly;
+
         const line_count = self.getLineCount();
         const last_line_index = if (line_count > 0) line_count - 1 else 0;
         const last_line = try self.getLine(last_line_index);
@@ -442,7 +486,19 @@ pub const Buffer = struct {
             last_line_columns,
         );
 
-        try self.delete(0, 0, codepoint_distance);
+        try self.deleteInternal(0, 0, codepoint_distance, options);
+    }
+
+    pub fn clearContent(self: *@This()) !void {
+        return self.clearContentInternal(
+            .{ .save_history = true, .force = false },
+        );
+    }
+
+    pub fn clearContentForce(self: *@This()) !void {
+        return self.clearContentInternal(
+            .{ .save_history = false, .force = true },
+        );
     }
 
     pub fn getEntireContent(self: *@This(), allocator: *Allocator) ![]const u8 {
@@ -655,6 +711,8 @@ pub const Buffer = struct {
     }
 
     pub fn undo(self: *@This(), line: *usize, column: *usize) !void {
+        if (self.readonly) return error.BufferIsReadOnly;
+
         if (self.undo_stack.popOrNull()) |op| {
             try self.undoOp(op);
             if (op.op != .end_checkpoint) return;
@@ -694,6 +752,8 @@ pub const Buffer = struct {
     }
 
     pub fn redo(self: *@This(), line: *usize, column: *usize) !void {
+        if (self.readonly) return error.BufferIsReadOnly;
+
         if (self.redo_stack.popOrNull()) |op| {
             try self.redoOp(op);
             if (op.op != .begin_checkpoint) return;
@@ -710,6 +770,8 @@ pub const Buffer = struct {
     }
 
     pub fn beginCheckpoint(self: *@This(), line: usize, column: usize) !void {
+        if (self.readonly) return error.BufferIsReadOnly;
+
         try self.undo_stack.append(TextOp{
             .generation = self.nextGeneration(),
             .op = .{
@@ -722,6 +784,8 @@ pub const Buffer = struct {
     }
 
     pub fn endCheckpoint(self: *@This(), line: usize, column: usize) !void {
+        if (self.readonly) return error.BufferIsReadOnly;
+
         if (self.undo_stack.items.len > 0) {
             const last_op = &self.undo_stack.items[self.undo_stack.items.len - 1];
             if (last_op.op == .begin_checkpoint) {

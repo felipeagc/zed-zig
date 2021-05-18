@@ -387,8 +387,8 @@ fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
     );
     defer g_editor.allocator.free(build_message);
 
-    try build_buffer.clearContent();
-    try build_buffer.insert(0, 0, build_message);
+    try build_buffer.clearContentForce();
+    try build_buffer.insertForce(0, 0, build_message);
 
     try g_editor.panels.insert(
         g_editor.selected_panel + 1,
@@ -544,8 +544,8 @@ pub fn init(allocator: *Allocator) !void {
         @embedFile("../filetypes/zig.json"),
     ));
 
-    try logMessage("Message 1\n", .{});
-    try logMessage("Message 2\n", .{});
+    logMessage("Message 1\n", .{}) catch {};
+    logMessage("Message 2\n", .{}) catch {};
 }
 
 pub fn deinit() void {
@@ -633,7 +633,8 @@ pub fn addBufferFromFile(path: []const u8) !*Buffer {
 
     var ext = std.fs.path.extension(path);
     if (ext.len > 0 and ext[0] == '.') ext = ext[1..]; // Remove '.'
-    const filetype = g_editor.filetype_extensions.get(ext) orelse getFileType("default");
+    const filetype =
+        g_editor.filetype_extensions.get(ext) orelse getFileType("default");
 
     const buffer = try Buffer.initFromFile(allocator, .{
         .path = actual_path,
@@ -658,6 +659,7 @@ pub fn getNamedBuffer(name: []const u8) !*Buffer {
         .{
             .name = name,
             .filetype = getFileType("default"),
+            .readonly = true,
         },
     );
 
@@ -680,7 +682,7 @@ pub fn logMessage(comptime fmt: []const u8, args: anytype) !void {
         try messages_buffer.getLine(last_line_index),
     );
 
-    try messages_buffer.insert(last_line_index, last_line_length, buf);
+    try messages_buffer.insertForce(last_line_index, last_line_length, buf);
 }
 
 pub fn addPanel(panel: *Panel) !void {
@@ -916,13 +918,25 @@ pub fn mainLoop() void {
                     defer g_editor.allocator.free(build_finished.output);
 
                     if (getNamedBuffer(BUILD_BUFFER_NAME)) |build_buffer| {
-                        build_buffer.clearContent() catch continue;
-                        build_buffer.insert(0, 0, build_finished.output) catch continue;
+                        build_buffer.clearContentForce() catch continue;
+                        build_buffer.insertForce(
+                            0,
+                            0,
+                            build_finished.output,
+                        ) catch continue;
 
                         if (build_finished.success) {
-                            build_buffer.insert(0, 0, "Build success!\n\n") catch continue;
+                            build_buffer.insertForce(
+                                0,
+                                0,
+                                "Build success!\n\n",
+                            ) catch continue;
                         } else {
-                            build_buffer.insert(0, 0, "Build failed!\n\n") catch continue;
+                            build_buffer.insertForce(
+                                0,
+                                0,
+                                "Build failed!\n\n",
+                            ) catch continue;
                         }
                     } else |err| {
                         std.log.err("failed to get build buffer: {}", .{err});

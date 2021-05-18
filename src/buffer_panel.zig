@@ -142,7 +142,13 @@ pub const BufferPanel = struct {
             .visual_line => "[V]",
         };
 
-        const modified_status = if (self.buffer.isModified()) " [+]" else "";
+        const modified_status = if (self.buffer.readonly) blk: {
+            break :blk " [RO]";
+        } else if (self.buffer.isModified()) blk: {
+            break :blk " [+]";
+        } else blk: {
+            break :blk "";
+        };
 
         return try std.fmt.allocPrint(allocator, "{s} {s}{s} L#{} C#{}", .{
             mode_name,
@@ -153,26 +159,31 @@ pub const BufferPanel = struct {
         });
     }
 
-    fn beginCheckpoint(self: *BufferPanel) void {
-        self.buffer.beginCheckpoint(self.cursor.line, self.cursor.column) catch |err| {
-            std.log.err("could not insert begin checkpoint: {}", .{err});
-        };
+    fn beginCheckpoint(self: *BufferPanel) callconv(.Inline) !void {
+        return self.buffer.beginCheckpoint(self.cursor.line, self.cursor.column);
     }
 
-    fn endCheckpoint(self: *BufferPanel) void {
-        self.buffer.endCheckpoint(self.cursor.line, self.cursor.column) catch |err| {
-            std.log.err("could not insert end checkpoint: {}", .{err});
-        };
+    fn endCheckpoint(self: *BufferPanel) callconv(.Inline) !void {
+        return self.buffer.endCheckpoint(self.cursor.line, self.cursor.column);
     }
 
-    fn getLineY(self: *BufferPanel, line_index: usize, rect: *const renderer.Rect, char_height: i32) i32 {
+    fn getLineY(
+        self: *BufferPanel,
+        line_index: usize,
+        rect: *const renderer.Rect,
+        char_height: i32,
+    ) i32 {
         return rect.y - @floatToInt(
             i32,
             std.math.floor(self.scroll_y.value * @intToFloat(f64, char_height)),
         ) + (@intCast(i32, line_index) * char_height);
     }
 
-    fn getSelectionRegion(self: *BufferPanel, start_pos: *Position, end_pos: *Position) !void {
+    fn getSelectionRegion(
+        self: *BufferPanel,
+        start_pos: *Position,
+        end_pos: *Position,
+    ) !void {
         const cursor = try self.getFixedCursorPos();
         if (cursor.line < self.mark.line) {
             start_pos.* = cursor;
@@ -657,15 +668,20 @@ pub const BufferPanel = struct {
     fn normalModeDeleteChar(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         try self.fixupCursor();
 
         const line = try self.buffer.getLine(self.cursor.line);
         if ((try std.unicode.utf8CountCodepoints(line)) == 0) return;
 
-        const content = try self.buffer.getContent(self.allocator, self.cursor.line, self.cursor.column, 1);
+        const content = try self.buffer.getContent(
+            self.allocator,
+            self.cursor.line,
+            self.cursor.column,
+            1,
+        );
         defer self.allocator.free(content);
         try renderer.setClipboardString(content);
 
@@ -675,8 +691,8 @@ pub const BufferPanel = struct {
     fn normalModeDeleteCharBefore(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         try self.fixupCursor();
 
@@ -700,8 +716,8 @@ pub const BufferPanel = struct {
     fn normalModeDeleteLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -719,7 +735,11 @@ pub const BufferPanel = struct {
         } else {
             const prev_line = try self.buffer.getLine(self.cursor.line - 1);
             const prev_line_length = try std.unicode.utf8CountCodepoints(prev_line);
-            try self.buffer.delete(self.cursor.line - 1, prev_line_length, line_length + 1);
+            try self.buffer.delete(
+                self.cursor.line - 1,
+                prev_line_length,
+                line_length + 1,
+            );
         }
 
         try renderer.setClipboardString(content);
@@ -734,8 +754,8 @@ pub const BufferPanel = struct {
     fn normalModeJoinLines(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const line_index = (try self.getFixedCursorPos()).line;
         if ((line_index + 1) >= self.buffer.getLineCount()) return;
@@ -743,7 +763,11 @@ pub const BufferPanel = struct {
         const next_line_index = line_index + 1;
         const next_line = try self.buffer.getLine(next_line_index);
         const leading_whitespace = getLeadingWhitespaceCodepointCount(next_line);
-        try self.buffer.delete(next_line_index, 0, leading_whitespace); // delete next line's leading whitespace
+        try self.buffer.delete(
+            next_line_index,
+            0,
+            leading_whitespace,
+        ); // delete next line's leading whitespace
 
         const line = try self.buffer.getLine(line_index);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -762,7 +786,7 @@ pub const BufferPanel = struct {
 
         self.mode = .insert;
 
-        self.beginCheckpoint();
+        try self.beginCheckpoint();
 
         try self.fixupCursor();
     }
@@ -774,7 +798,7 @@ pub const BufferPanel = struct {
 
         self.mode = .insert;
 
-        self.beginCheckpoint();
+        try self.beginCheckpoint();
 
         self.cursor.column += 1;
         try self.fixupCursor();
@@ -787,7 +811,7 @@ pub const BufferPanel = struct {
 
         self.mode = .insert;
 
-        self.beginCheckpoint();
+        try self.beginCheckpoint();
 
         self.cursor.column = try self.getModeMaxCol(self.cursor.line);
         try self.fixupCursor();
@@ -800,7 +824,7 @@ pub const BufferPanel = struct {
 
         self.mode = .insert;
 
-        self.beginCheckpoint();
+        try self.beginCheckpoint();
 
         self.cursor.column = 0;
         try self.fixupCursor();
@@ -811,7 +835,7 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
-        self.beginCheckpoint();
+        try self.beginCheckpoint();
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -835,7 +859,7 @@ pub const BufferPanel = struct {
 
         try self.fixupCursor();
 
-        self.beginCheckpoint();
+        try self.beginCheckpoint();
 
         try self.buffer.insert(self.cursor.line, 0, "\n");
 
@@ -859,7 +883,7 @@ pub const BufferPanel = struct {
         }
         try self.fixupCursor();
 
-        self.endCheckpoint();
+        try self.endCheckpoint();
     }
 
     fn getModeMaxCol(self: *BufferPanel, line_index: usize) !usize {
@@ -945,7 +969,9 @@ pub const BufferPanel = struct {
             try self.buffer.delete(self.cursor.line, self.cursor.column, 1);
 
             if (mem.eql(u8, first_content, " ")) {
-                while (self.cursor.column > 0 and self.cursor.column % self.buffer.filetype.tab_width != 0) {
+                while (self.cursor.column > 0 and
+                    self.cursor.column % self.buffer.filetype.tab_width != 0)
+                {
                     const content = try self.buffer.getContent(
                         self.allocator,
                         self.cursor.line,
@@ -1021,8 +1047,8 @@ pub const BufferPanel = struct {
     fn pasteAfter(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const clipboard_content = (try renderer.getClipboardString(self.allocator)) orelse return;
         defer self.allocator.free(clipboard_content);
@@ -1058,8 +1084,8 @@ pub const BufferPanel = struct {
     fn pasteBefore(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const clipboard_content = (try renderer.getClipboardString(self.allocator)) orelse return;
         defer self.allocator.free(clipboard_content);
@@ -1083,8 +1109,8 @@ pub const BufferPanel = struct {
     fn yankLine(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const line = try self.buffer.getLine(self.cursor.line);
         const line_length = try std.unicode.utf8CountCodepoints(line);
@@ -1127,7 +1153,11 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn getNextWordStart(self: *BufferPanel, cursor: Position, out_line: *usize) !?WordIterator.Word {
+    fn getNextWordStart(
+        self: *BufferPanel,
+        cursor: Position,
+        out_line: *usize,
+    ) !?WordIterator.Word {
         var line_index: usize = cursor.line;
         while (line_index < self.buffer.getLineCount()) : (line_index += 1) {
             const line = try self.buffer.getLine(line_index);
@@ -1147,7 +1177,11 @@ pub const BufferPanel = struct {
         return null;
     }
 
-    fn getNextWordEnd(self: *BufferPanel, cursor: Position, out_line: *usize) !?WordIterator.Word {
+    fn getNextWordEnd(
+        self: *BufferPanel,
+        cursor: Position,
+        out_line: *usize,
+    ) !?WordIterator.Word {
         var line_index: usize = cursor.line;
         while (line_index < self.buffer.getLineCount()) : (line_index += 1) {
             const line = try self.buffer.getLine(line_index);
@@ -1167,7 +1201,11 @@ pub const BufferPanel = struct {
         return null;
     }
 
-    fn getPrevWordStart(self: *BufferPanel, cursor: Position, out_line: *usize) !?WordIterator.Word {
+    fn getPrevWordStart(
+        self: *BufferPanel,
+        cursor: Position,
+        out_line: *usize,
+    ) !?WordIterator.Word {
         var maybe_word: ?WordIterator.Word = null;
         var first_line_index = cursor.line;
         var line_index: isize = @intCast(isize, cursor.line);
@@ -1240,8 +1278,8 @@ pub const BufferPanel = struct {
     fn deleteToNextWordStart(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         var start_pos = try self.getFixedCursorPos();
         var end_pos = start_pos;
@@ -1281,8 +1319,8 @@ pub const BufferPanel = struct {
     fn deleteToNextWordEnd(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         var start_pos = try self.getFixedCursorPos();
         var end_pos = start_pos;
@@ -1316,8 +1354,8 @@ pub const BufferPanel = struct {
     fn deleteToPrevWordStart(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         var end_pos = try self.getFixedCursorPos();
         var start_pos = end_pos;
@@ -1409,8 +1447,8 @@ pub const BufferPanel = struct {
 
         if (args.len != 1) return error.InvalidReplaceParameters;
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const cursor = try self.getFixedCursorPos();
         try self.buffer.delete(cursor.line, cursor.column, 1);
@@ -1420,8 +1458,8 @@ pub const BufferPanel = struct {
     fn visualModeDelete(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const cursor = try self.getFixedCursorPos();
 
@@ -1456,8 +1494,8 @@ pub const BufferPanel = struct {
     fn visualModeYank(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const cursor = try self.getFixedCursorPos();
 
@@ -1497,8 +1535,8 @@ pub const BufferPanel = struct {
 
         const pasted_content = maybe_pasted_content orelse "";
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const cursor = try self.getFixedCursorPos();
 
@@ -1534,8 +1572,8 @@ pub const BufferPanel = struct {
     fn visualLineModeDelete(panel: *editor.Panel, args: [][]const u8) anyerror!void {
         var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const cursor = try self.getFixedCursorPos();
 
@@ -1618,8 +1656,8 @@ pub const BufferPanel = struct {
 
         const pasted_content = maybe_pasted_content orelse "";
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         const cursor = try self.getFixedCursorPos();
 
@@ -1746,7 +1784,10 @@ pub const BufferPanel = struct {
         try self.fixupCursor();
     }
 
-    fn bufferForwardSearchConfirm(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+    fn bufferForwardSearchConfirm(
+        panel: *editor.Panel,
+        args: [][]const u8,
+    ) anyerror!void {
         if (args.len != 1) return error.InvalidCommandArgs;
         const text = args[0];
 
@@ -1769,7 +1810,10 @@ pub const BufferPanel = struct {
         try gotoNextSearchMatch(panel, &[_][]const u8{});
     }
 
-    fn bufferBackwardSearchConfirm(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+    fn bufferBackwardSearchConfirm(
+        panel: *editor.Panel,
+        args: [][]const u8,
+    ) anyerror!void {
         if (args.len != 1) return error.InvalidCommandArgs;
         const text = args[0];
 
@@ -1792,7 +1836,10 @@ pub const BufferPanel = struct {
         try gotoPrevSearchMatch(panel, &[_][]const u8{});
     }
 
-    fn normalModeForwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+    fn normalModeForwardSearch(
+        panel: *editor.Panel,
+        args: [][]const u8,
+    ) anyerror!void {
         var minibuffer = editor.getMiniBuffer();
         try minibuffer.activate(
             panel,
@@ -1804,7 +1851,10 @@ pub const BufferPanel = struct {
         );
     }
 
-    fn normalModeBackwardSearch(panel: *editor.Panel, args: [][]const u8) anyerror!void {
+    fn normalModeBackwardSearch(
+        panel: *editor.Panel,
+        args: [][]const u8,
+    ) anyerror!void {
         var minibuffer = editor.getMiniBuffer();
         try minibuffer.activate(
             panel,
@@ -1897,10 +1947,14 @@ pub const BufferPanel = struct {
             return;
         }
 
-        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex.?;
-        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex.?;
-        const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
-        const maybe_indent_next_line_regex = &self.buffer.filetype.indent_next_line_regex;
+        const increase_indent_regex =
+            &self.buffer.filetype.increase_indent_regex.?;
+        const decrease_indent_regex =
+            &self.buffer.filetype.decrease_indent_regex.?;
+        const maybe_zero_indent_regex =
+            &self.buffer.filetype.zero_indent_regex;
+        const maybe_indent_next_line_regex =
+            &self.buffer.filetype.indent_next_line_regex;
 
         var level: isize = 0;
 
@@ -1950,10 +2004,14 @@ pub const BufferPanel = struct {
             return;
         }
 
-        const increase_indent_regex = &self.buffer.filetype.increase_indent_regex.?;
-        const decrease_indent_regex = &self.buffer.filetype.decrease_indent_regex.?;
-        const maybe_zero_indent_regex = &self.buffer.filetype.zero_indent_regex;
-        const maybe_indent_next_line_regex = &self.buffer.filetype.indent_next_line_regex;
+        const increase_indent_regex =
+            &self.buffer.filetype.increase_indent_regex.?;
+        const decrease_indent_regex =
+            &self.buffer.filetype.decrease_indent_regex.?;
+        const maybe_zero_indent_regex =
+            &self.buffer.filetype.zero_indent_regex;
+        const maybe_indent_next_line_regex =
+            &self.buffer.filetype.indent_next_line_regex;
 
         var level: isize = 0;
 
@@ -2014,8 +2072,8 @@ pub const BufferPanel = struct {
 
         const line_index = (try self.getFixedCursorPos()).line;
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         try self.autoIndentSingleLine(line_index);
 
@@ -2030,8 +2088,8 @@ pub const BufferPanel = struct {
         const start_line = (try self.getFixedCursorPos()).line;
         const end_line = if (line_count > 0) line_count - 1 else line_count;
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         try self.autoIndentRegion(start_line, end_line);
 
@@ -2045,8 +2103,8 @@ pub const BufferPanel = struct {
         var end_pos = Position{};
         try self.getSelectionRegion(&start_pos, &end_pos);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         try self.autoIndentRegion(start_pos.line, end_pos.line);
 
@@ -2061,8 +2119,8 @@ pub const BufferPanel = struct {
         const indent_level_float = try self.getLineIndentLevel(line_index);
         const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         try self.indentLine(line_index, if (indent_level > 0) indent_level - 1 else 0);
     }
@@ -2074,8 +2132,8 @@ pub const BufferPanel = struct {
         const indent_level_float = try self.getLineIndentLevel(line_index);
         const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         try self.indentLine(line_index, indent_level + 1);
     }
@@ -2087,8 +2145,8 @@ pub const BufferPanel = struct {
         var end_pos = Position{};
         try self.getSelectionRegion(&start_pos, &end_pos);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         var line_index = start_pos.line;
         while (line_index <= end_pos.line) : (line_index += 1) {
@@ -2106,8 +2164,8 @@ pub const BufferPanel = struct {
         var end_pos = Position{};
         try self.getSelectionRegion(&start_pos, &end_pos);
 
-        self.beginCheckpoint();
-        defer self.endCheckpoint();
+        try self.beginCheckpoint();
+        defer self.endCheckpoint() catch {};
 
         var line_index = start_pos.line;
         while (line_index <= end_pos.line) : (line_index += 1) {
@@ -2145,8 +2203,8 @@ pub const BufferPanel = struct {
         const success = (term == .Exited and term.Exited == 0);
 
         if (success) {
-            self.beginCheckpoint();
-            defer self.endCheckpoint();
+            try self.beginCheckpoint();
+            defer self.endCheckpoint() catch {};
 
             try self.buffer.delete(0, 0, content.len);
             try self.buffer.insert(0, 0, stdout);
@@ -2183,10 +2241,19 @@ pub const BufferPanel = struct {
 
     fn registerVT(allocator: *Allocator) anyerror!void {
         command_registry = CommandRegistry.init(allocator);
+        errdefer command_registry.deinit();
+
         normal_key_map = try KeyMap.init(allocator);
+        errdefer normal_key_map.deinit();
+
         insert_key_map = try KeyMap.init(allocator);
+        errdefer insert_key_map.deinit();
+
         visual_key_map = try KeyMap.init(allocator);
+        errdefer visual_key_map.deinit();
+
         visual_line_key_map = try KeyMap.init(allocator);
+        errdefer visual_line_key_map.deinit();
 
         const normal_key_maps = [_]*KeyMap{
             &normal_key_map,
