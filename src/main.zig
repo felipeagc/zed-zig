@@ -7,7 +7,10 @@ const Buffer = @import("buffer.zig").Buffer;
 const args_parser = @import("args.zig");
 
 const GlobalAllocator = struct {
-    const Internal = if (builtin.mode == .Debug) std.heap.GeneralPurposeAllocator(.{}) else struct {};
+    const Internal = if (builtin.mode == .Debug)
+        std.heap.GeneralPurposeAllocator(.{})
+    else
+        struct {};
 
     internal: Internal = Internal{},
 

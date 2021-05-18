@@ -54,7 +54,7 @@ const TextOp = struct {
 
 const TextOpOptions = struct {
     save_history: bool,
-    force: bool = false,
+    force: bool,
 };
 
 pub const BufferOptions = struct {
@@ -353,7 +353,7 @@ pub const Buffer = struct {
             line_index,
             column_index,
             text,
-            .{ .save_history = true },
+            .{ .save_history = true, .force = false },
         );
     }
 
@@ -367,10 +367,7 @@ pub const Buffer = struct {
             line_index,
             column_index,
             text,
-            .{
-                .save_history = false,
-                .force = true,
-            },
+            .{ .save_history = false, .force = true },
         );
     }
 
@@ -401,7 +398,8 @@ pub const Buffer = struct {
             try first_line.content.appendSlice(result.after_content);
         }
 
-        const deleted_lines = self.lines.items[line_index + 1 .. line_index + result.line_count];
+        const deleted_lines =
+            self.lines.items[line_index + 1 .. line_index + result.line_count];
         for (deleted_lines) |*line| {
             line.deinit();
         }
@@ -450,7 +448,7 @@ pub const Buffer = struct {
             line_index,
             column_index,
             codepoint_length,
-            .{ .save_history = false },
+            .{ .save_history = true, .force = false },
         );
     }
 
@@ -464,7 +462,7 @@ pub const Buffer = struct {
             line_index,
             column_index,
             codepoint_length,
-            .{ .save_history = true, .force = true },
+            .{ .save_history = false, .force = true },
         );
     }
 
@@ -695,7 +693,7 @@ pub const Buffer = struct {
                     op.op.insert.line,
                     op.op.insert.column,
                     op.op.insert.codepoint_length,
-                    .{ .save_history = false },
+                    .{ .save_history = false, .force = false },
                 );
             },
             .delete => {
@@ -703,7 +701,7 @@ pub const Buffer = struct {
                     op.op.delete.line,
                     op.op.delete.column,
                     op.op.delete.text,
-                    .{ .save_history = false },
+                    .{ .save_history = false, .force = false },
                 );
             },
             .begin_checkpoint, .end_checkpoint => {},
@@ -736,7 +734,7 @@ pub const Buffer = struct {
                     op.op.insert.line,
                     op.op.insert.column,
                     op.op.insert.text,
-                    .{ .save_history = false },
+                    .{ .save_history = false, .force = false },
                 );
             },
             .delete => {
@@ -744,7 +742,7 @@ pub const Buffer = struct {
                     op.op.delete.line,
                     op.op.delete.column,
                     op.op.delete.codepoint_length,
-                    .{ .save_history = false },
+                    .{ .save_history = false, .force = false },
                 );
             },
             .begin_checkpoint, .end_checkpoint => {},
@@ -812,9 +810,12 @@ pub const Buffer = struct {
         end_line: usize,
         end_column: usize,
     ) !usize {
-        if (end_line < start_line) return error.GetCodepointDistanceInvalidEndLine;
-        if (end_line == start_line and end_column < start_column) return error.GetCodepointDistanceInvalidEndColumn;
-        if (end_line == start_line and end_column == start_column) return 0;
+        if (end_line < start_line)
+            return error.GetCodepointDistanceInvalidEndLine;
+        if (end_line == start_line and end_column < start_column)
+            return error.GetCodepointDistanceInvalidEndColumn;
+        if (end_line == start_line and end_column == start_column)
+            return 0;
 
         var distance: usize = 0;
 
@@ -824,7 +825,9 @@ pub const Buffer = struct {
             var iter = (try std.unicode.Utf8View.init(line)).iterator();
             var column_index: usize = 0;
             while (iter.nextCodepoint()) |codepoint| {
-                if (line_index > start_line or (line_index == start_line and column_index > start_column)) {
+                if (line_index > start_line or
+                    (line_index == start_line and column_index > start_column))
+                {
                     distance += 1;
                 }
                 if (line_index >= end_line and column_index >= end_column) {
@@ -888,7 +891,10 @@ pub const Buffer = struct {
             }
         }
 
-        self.highlighted_line_count = std.math.min(self.highlighted_line_count, line_to_reset);
+        self.highlighted_line_count = std.math.min(
+            self.highlighted_line_count,
+            line_to_reset,
+        );
         if (self.highlighter_state) |highlighter_state| {
             try highlighter_state.resetStack();
         }
