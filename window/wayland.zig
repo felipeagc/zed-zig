@@ -763,17 +763,17 @@ pub const WaylandWindowSystem = struct {
             break :blk @rem(timer_millis, min_delay);
         } else -1;
 
-        if ((try std.os.poll(&fds, timeout)) > 0) {
-            // fd available for reading
+        _ = try std.os.poll(&fds, timeout);
 
-            if (fds[1].revents != 0) {
-                var dummy_buf = [1]u8{0};
-                _ = std.os.read(self.event_read_fd, &dummy_buf) catch 0;
-            }
+        if (fds[1].revents != 0) {
+            const lock = self.queue_mutex.acquire();
+            defer lock.release();
+            var dummy_buf = [1]u8{0};
+            _ = std.os.read(self.event_read_fd, &dummy_buf) catch 0;
+        }
 
-            if (fds[0].revents != 0) {
-                _ = try self.display.dispatch();
-            }
+        if (fds[0].revents != 0) {
+            _ = try self.display.dispatch();
         } else {
             _ = try self.display.dispatchPending();
         }
