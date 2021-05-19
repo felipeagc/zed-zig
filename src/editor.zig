@@ -126,6 +126,13 @@ pub const Panel = struct {
 
         return false;
     }
+
+    pub fn as(panel: *Panel, comptime T: type) callconv(.Inline) ?*T {
+        if (&T.VT == panel.vt) {
+            return @fieldParentPtr(T, "panel", panel);
+        }
+        return null;
+    }
 };
 
 pub const CommandRegistry = struct {
@@ -394,10 +401,22 @@ fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
     try build_buffer.clearContentForce();
     try build_buffer.insertForce(0, 0, build_message);
 
-    try g_editor.panels.insert(
-        g_editor.selected_panel + 1,
-        try BufferPanel.init(g_editor.allocator, build_buffer),
-    );
+    var found_panel = false;
+    for (g_editor.panels.items) |panel_| {
+        if (panel_.as(BufferPanel)) |buffer_panel| {
+            if (buffer_panel.buffer == build_buffer) {
+                found_panel = true;
+                break;
+            }
+        }
+    }
+
+    if (!found_panel) {
+        try g_editor.panels.insert(
+            g_editor.selected_panel + 1,
+            try BufferPanel.init(g_editor.allocator, build_buffer),
+        );
+    }
 
     try g_editor.task_req_channel.send(.{
         .run_build = .{
