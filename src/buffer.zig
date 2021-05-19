@@ -60,6 +60,7 @@ const TextOpOptions = struct {
 pub const BufferOptions = struct {
     filetype: *FileType,
     readonly: bool = false,
+    builtin: bool = false,
     name: ?[]const u8 = null,
     path: ?[]const u8 = null,
 };
@@ -76,7 +77,8 @@ pub const Buffer = struct {
     highlighter_state: ?*HighlighterState = null,
     saved_generation: usize = 0,
     current_generation: usize = 0,
-    readonly: bool = false,
+    readonly: bool,
+    builtin: bool,
 
     pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
         var self = try allocator.create(@This());
@@ -91,6 +93,7 @@ pub const Buffer = struct {
                 path,
             ) else null,
             .readonly = options.readonly,
+            .builtin = options.builtin,
             .filetype = options.filetype,
         };
 

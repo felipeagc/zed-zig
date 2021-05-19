@@ -74,6 +74,10 @@ const Editor = struct {
     task_req_channel: util.Channel(TaskReq, 1024) = .{},
     task_resp_channel: util.Channel(TaskResp, 1024) = .{},
     task_threads: [4]*std.Thread,
+
+    messages_buffer: *Buffer,
+    scratch_buffer: *Buffer,
+    build_buffer: *Buffer,
 };
 
 pub const PanelVT = struct {
@@ -297,7 +301,7 @@ fn commandNewSplit(panel: *Panel, args: [][]const u8) anyerror!void {
         g_editor.selected_panel + 1,
         try BufferPanel.init(
             g_editor.allocator,
-            try getNamedBuffer(SCRATCH_BUFFER_NAME),
+            g_editor.scratch_buffer,
         ),
     );
 }
@@ -378,7 +382,7 @@ fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
     const command: []const u8 = "zig build";
     const command_dupe = try g_editor.allocator.dupe(u8, command);
 
-    const build_buffer = try getNamedBuffer(BUILD_BUFFER_NAME);
+    const build_buffer = g_editor.build_buffer;
 
     const build_message = try std.fmt.allocPrint(
         g_editor.allocator,
@@ -412,6 +416,12 @@ pub fn init(allocator: *Allocator) !void {
 
     try regex.initLibrary();
 
+    const default_filetype = try FileType.init(
+        allocator,
+        "default",
+        @embedFile("../filetypes/default.json"),
+    );
+
     g_editor = Editor{
         .allocator = allocator,
 
@@ -438,6 +448,37 @@ pub fn init(allocator: *Allocator) !void {
         .filetype_extensions = std.StringArrayHashMap(*FileType).init(allocator),
 
         .task_threads = undefined,
+
+        .scratch_buffer = try Buffer.initWithContent(
+            allocator,
+            "",
+            .{
+                .name = SCRATCH_BUFFER_NAME,
+                .filetype = default_filetype,
+                .readonly = false,
+                .builtin = true,
+            },
+        ),
+        .messages_buffer = try Buffer.initWithContent(
+            allocator,
+            "",
+            .{
+                .name = MESSAGES_BUFFER_NAME,
+                .filetype = default_filetype,
+                .readonly = true,
+                .builtin = true,
+            },
+        ),
+        .build_buffer = try Buffer.initWithContent(
+            allocator,
+            "",
+            .{
+                .name = BUILD_BUFFER_NAME,
+                .filetype = default_filetype,
+                .readonly = true,
+                .builtin = true,
+            },
+        ),
     };
 
     for (g_editor.task_threads) |*task_thread| {
@@ -526,11 +567,7 @@ pub fn init(allocator: *Allocator) !void {
     try g_editor.global_commands.register("vsp", commandNewSplit);
     try g_editor.global_commands.register("q", commandCloseSplit);
 
-    try registerFileType(try FileType.init(
-        allocator,
-        "default",
-        @embedFile("../filetypes/default.json"),
-    ));
+    try registerFileType(default_filetype);
 
     try registerFileType(try FileType.init(
         allocator,
@@ -568,8 +605,14 @@ pub fn deinit() void {
         }
     }
 
+    g_editor.scratch_buffer.deinit();
+    g_editor.messages_buffer.deinit();
+    g_editor.build_buffer.deinit();
+
     for (g_editor.buffers.items) |buffer| {
-        buffer.deinit();
+        if (!buffer.builtin) {
+            buffer.deinit();
+        }
     }
 
     {
@@ -644,32 +687,8 @@ pub fn addBufferFromFile(path: []const u8) !*Buffer {
     return buffer;
 }
 
-pub fn getNamedBuffer(name: []const u8) !*Buffer {
-    const allocator = g_editor.allocator;
-
-    for (g_editor.buffers.items) |buffer| {
-        if (mem.eql(u8, buffer.name, name)) {
-            return buffer;
-        }
-    }
-
-    const buffer = try Buffer.initWithContent(
-        allocator,
-        "",
-        .{
-            .name = name,
-            .filetype = getFileType("default"),
-            .readonly = true,
-        },
-    );
-
-    try g_editor.buffers.append(buffer);
-
-    return buffer;
-}
-
 pub fn logMessage(comptime fmt: []const u8, args: anytype) !void {
-    const messages_buffer = try getNamedBuffer(MESSAGES_BUFFER_NAME);
+    const messages_buffer = g_editor.messages_buffer;
     const buf = try std.fmt.allocPrint(g_editor.allocator, fmt, args);
     defer g_editor.allocator.free(buf);
 
@@ -898,9 +917,7 @@ pub fn mainLoop() void {
         renderer.beginFrame() catch unreachable;
 
         if (g_editor.panels.items.len == 0) {
-            const scratch_buffer = getNamedBuffer(
-                SCRATCH_BUFFER_NAME,
-            ) catch unreachable;
+            const scratch_buffer = g_editor.scratch_buffer;
 
             const panel = BufferPanel.init(
                 g_editor.allocator,
@@ -916,30 +933,27 @@ pub fn mainLoop() void {
             switch (resp) {
                 .build_finished => |build_finished| {
                     defer g_editor.allocator.free(build_finished.output);
+                    const build_buffer = g_editor.build_buffer;
 
-                    if (getNamedBuffer(BUILD_BUFFER_NAME)) |build_buffer| {
-                        build_buffer.clearContentForce() catch continue;
+                    build_buffer.clearContentForce() catch continue;
+                    build_buffer.insertForce(
+                        0,
+                        0,
+                        build_finished.output,
+                    ) catch continue;
+
+                    if (build_finished.success) {
                         build_buffer.insertForce(
                             0,
                             0,
-                            build_finished.output,
+                            "Build success!\n\n",
                         ) catch continue;
-
-                        if (build_finished.success) {
-                            build_buffer.insertForce(
-                                0,
-                                0,
-                                "Build success!\n\n",
-                            ) catch continue;
-                        } else {
-                            build_buffer.insertForce(
-                                0,
-                                0,
-                                "Build failed!\n\n",
-                            ) catch continue;
-                        }
-                    } else |err| {
-                        std.log.err("failed to get build buffer: {}", .{err});
+                    } else {
+                        build_buffer.insertForce(
+                            0,
+                            0,
+                            "Build failed!\n\n",
+                        ) catch continue;
                     }
                 },
             }
