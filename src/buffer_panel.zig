@@ -1881,6 +1881,19 @@ fn getLeadingWhitespaceCodepointCount(line: []const u8) usize {
     return length;
 }
 
+fn getPrevNonEmptyLine(self: *BufferPanel, line_index: usize) !usize {
+    const filetype = self.buffer.filetype;
+
+    var i: isize = @intCast(isize, line_index) - 1;
+    outer: while (i >= 0) : (i -= 1) {
+        const line_content = try self.buffer.getLine(@intCast(usize, i));
+        for (line_content) |char| {
+            if (char > 32) break :outer;
+        }
+    }
+    return @intCast(usize, std.math.max(0, i));
+}
+
 fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) !usize {
     const filetype = self.buffer.filetype;
     const increase_indent_regex =
@@ -1905,7 +1918,7 @@ fn getPrevUnindentedLine(self: *BufferPanel, line_index: usize) !usize {
     return @intCast(usize, std.math.max(0, i));
 }
 
-fn getLineIndentLevel(self: *BufferPanel, line_index: usize) !f64 {
+fn getLineIndentLevel(self: *BufferPanel, line_index: usize) !usize {
     const filetype = self.buffer.filetype;
 
     const line_content = try self.buffer.getLine(line_index);
@@ -1920,7 +1933,7 @@ fn getLineIndentLevel(self: *BufferPanel, line_index: usize) !f64 {
         }
     }
 
-    return level;
+    return @floatToInt(usize, std.math.ceil(level));
 }
 
 fn indentLine(self: *BufferPanel, line_index: usize, indent_level: usize) !void {
@@ -1957,8 +1970,6 @@ fn autoIndentSingleLine(self: *BufferPanel, line_index: usize) !void {
     const maybe_indent_next_line_regex =
         &self.buffer.filetype.indent_next_line_regex;
 
-    var level: isize = 0;
-
     if (maybe_zero_indent_regex.*) |*zero_indent_regex| {
         const line_content = try self.buffer.getLine(line_index);
         zero_indent_regex.setBuffer(line_content);
@@ -1968,31 +1979,35 @@ fn autoIndentSingleLine(self: *BufferPanel, line_index: usize) !void {
         }
     }
 
-    var i: usize = try self.getPrevUnindentedLine(line_index);
-    while (i <= line_index) : (i += 1) {
-        const line_content = try self.buffer.getLine(i);
+    var prev_line_index: usize = try self.getPrevNonEmptyLine(line_index);
+    const prev_line_content = try self.buffer.getLine(prev_line_index);
+    const current_line_content = try self.buffer.getLine(line_index);
 
-        if (i + 1 == line_index) {
-            if (maybe_indent_next_line_regex.*) |*indent_next_line_regex| {
-                indent_next_line_regex.setBuffer(line_content);
-                increase_indent_regex.setBuffer(try self.buffer.getLine(line_index));
-                if (indent_next_line_regex.nextMatch(null, null) != null and
-                    increase_indent_regex.nextMatch(null, null) == null)
-                {
-                    level += 1;
-                }
+    var level: isize = if (prev_line_index != line_index) @intCast(
+        isize,
+        try self.getLineIndentLevel(prev_line_index),
+    ) else 0;
+
+    if (maybe_indent_next_line_regex.*) |*indent_next_line_regex| {
+        indent_next_line_regex.setBuffer(prev_line_content);
+        increase_indent_regex.setBuffer(current_line_content);
+        if (indent_next_line_regex.nextMatch(null, null) != null) {
+            if (increase_indent_regex.nextMatch(null, null) == null) {
+                level += 1;
+            } else {
+                level -= 1;
             }
         }
+    }
 
-        increase_indent_regex.setBuffer(line_content);
-        if (i != line_index and increase_indent_regex.nextMatch(null, null) != null) {
-            level += 1;
-        }
+    increase_indent_regex.setBuffer(prev_line_content);
+    if (prev_line_index != line_index and increase_indent_regex.nextMatch(null, null) != null) {
+        level += 1;
+    }
 
-        decrease_indent_regex.setBuffer(line_content);
-        if (decrease_indent_regex.nextMatch(null, null) != null) {
-            level -= 1;
-        }
+    decrease_indent_regex.setBuffer(current_line_content);
+    if (decrease_indent_regex.nextMatch(null, null) != null) {
+        level -= 1;
     }
 
     try self.indentLine(line_index, @intCast(usize, std.math.max(0, level)));
@@ -2014,57 +2029,49 @@ fn autoIndentRegion(self: *BufferPanel, start_line: usize, end_line: usize) !voi
     const maybe_indent_next_line_regex =
         &self.buffer.filetype.indent_next_line_regex;
 
-    var level: isize = 0;
-
-    var i: usize = try self.getPrevUnindentedLine(start_line);
-    while (i <= end_line) : (i += 1) {
-        {
-            const line_content = try self.buffer.getLine(i);
-            decrease_indent_regex.setBuffer(line_content);
-            if (decrease_indent_regex.nextMatch(null, null) != null) {
-                level -= 1;
+    var line_index: usize = start_line;
+    while (line_index <= end_line) : (line_index += 1) {
+        if (maybe_zero_indent_regex.*) |*zero_indent_regex| {
+            const line_content = try self.buffer.getLine(line_index);
+            zero_indent_regex.setBuffer(line_content);
+            if (zero_indent_regex.nextMatch(null, null) != null) {
+                try self.indentLine(line_index, 0);
+                return;
             }
         }
 
-        var prev_line_caused_indent = false;
+        var prev_line_index: usize = try self.getPrevNonEmptyLine(line_index);
+        const prev_line_content = try self.buffer.getLine(prev_line_index);
+        const current_line_content = try self.buffer.getLine(line_index);
 
-        if (i > 0) {
-            const prev_line_content = try self.buffer.getLine(i - 1);
-            const line_content = try self.buffer.getLine(i);
+        var level: isize = if (prev_line_index != line_index) @intCast(
+            isize,
+            try self.getLineIndentLevel(prev_line_index),
+        ) else 0;
 
-            if (maybe_indent_next_line_regex.*) |*indent_next_line_regex| {
-                indent_next_line_regex.setBuffer(prev_line_content);
-                increase_indent_regex.setBuffer(line_content);
-
-                prev_line_caused_indent =
-                    indent_next_line_regex.nextMatch(null, null) != null and
-                    increase_indent_regex.nextMatch(null, null) == null;
-            }
-        }
-
-        if (prev_line_caused_indent) level += 1;
-
-        if (start_line <= i and i <= end_line) {
-            try self.indentLine(i, @intCast(usize, std.math.max(0, level)));
-
-            if (maybe_zero_indent_regex.*) |*zero_indent_regex| {
-                const line_content = try self.buffer.getLine(i);
-                zero_indent_regex.setBuffer(line_content);
-                if (zero_indent_regex.nextMatch(null, null) != null) {
-                    try self.indentLine(i, 0);
+        if (maybe_indent_next_line_regex.*) |*indent_next_line_regex| {
+            indent_next_line_regex.setBuffer(prev_line_content);
+            increase_indent_regex.setBuffer(current_line_content);
+            if (indent_next_line_regex.nextMatch(null, null) != null) {
+                if (increase_indent_regex.nextMatch(null, null) == null) {
+                    level += 1;
+                } else {
+                    level -= 1;
                 }
             }
         }
 
-        if (prev_line_caused_indent) level -= 1;
-
-        {
-            const line_content = try self.buffer.getLine(i);
-            increase_indent_regex.setBuffer(line_content);
-            if (increase_indent_regex.nextMatch(null, null) != null) {
-                level += 1;
-            }
+        increase_indent_regex.setBuffer(prev_line_content);
+        if (prev_line_index != line_index and increase_indent_regex.nextMatch(null, null) != null) {
+            level += 1;
         }
+
+        decrease_indent_regex.setBuffer(current_line_content);
+        if (decrease_indent_regex.nextMatch(null, null) != null) {
+            level -= 1;
+        }
+
+        try self.indentLine(line_index, @intCast(usize, std.math.max(0, level)));
     }
 }
 
@@ -2117,8 +2124,7 @@ fn normalLeftShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
     var self = @fieldParentPtr(BufferPanel, "panel", panel);
     const line_index = (try self.getFixedCursorPos()).line;
 
-    const indent_level_float = try self.getLineIndentLevel(line_index);
-    const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+    const indent_level = try self.getLineIndentLevel(line_index);
 
     try self.beginCheckpoint();
     defer self.endCheckpoint() catch {};
@@ -2130,8 +2136,7 @@ fn normalRightShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
     var self = @fieldParentPtr(BufferPanel, "panel", panel);
     const line_index = (try self.getFixedCursorPos()).line;
 
-    const indent_level_float = try self.getLineIndentLevel(line_index);
-    const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+    const indent_level = try self.getLineIndentLevel(line_index);
 
     try self.beginCheckpoint();
     defer self.endCheckpoint() catch {};
@@ -2151,8 +2156,7 @@ fn visualLeftShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
 
     var line_index = start_pos.line;
     while (line_index <= end_pos.line) : (line_index += 1) {
-        const indent_level_float = try self.getLineIndentLevel(line_index);
-        const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+        const indent_level = try self.getLineIndentLevel(line_index);
 
         try self.indentLine(line_index, if (indent_level > 0) indent_level - 1 else 0);
     }
@@ -2170,8 +2174,7 @@ fn visualRightShift(panel: *editor.Panel, _: [][]const u8) anyerror!void {
 
     var line_index = start_pos.line;
     while (line_index <= end_pos.line) : (line_index += 1) {
-        const indent_level_float = try self.getLineIndentLevel(line_index);
-        const indent_level = @floatToInt(usize, std.math.ceil(indent_level_float));
+        const indent_level = try self.getLineIndentLevel(line_index);
 
         try self.indentLine(line_index, indent_level + 1);
     }

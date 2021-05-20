@@ -2,7 +2,7 @@
 	"extensions": [ "zig" ],
 	"increase_indent_pattern": "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
 	"decrease_indent_pattern": "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
-	"indent_next_line_pattern": "^.*\\)\\s*(\\/\\/.*|\\/[*].*[*]\\/\\s*)?$",
+	"indent_next_line_pattern": "^\\s*\\w+\\s*\\(.*\\)\\s*(\\/\\/.*|\\/\\*.*\\*\\/\\s*)?$",
 	"formatter_command": "zig fmt --stdin",
 	"brackets": [
 		{ "open": "\"", "close": "\"" },
