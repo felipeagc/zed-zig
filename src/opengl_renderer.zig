@@ -153,28 +153,171 @@ const Glyph = struct {
     advance: i32,
 };
 
-pub const MAX_FONT_SIZE = 128;
-const MAX_CODEPOINT = 256;
+const ATLAS_CODEPOINTS = 256;
 
 const FontAtlas = struct {
     width: i32,
     height: i32,
     texture: u32,
-    glyphs: [MAX_CODEPOINT + 1]Glyph,
+    glyphs: [ATLAS_CODEPOINTS]Glyph,
 
-    fn getGlyph(self: *@This(), codepoint: u32) *Glyph {
-        if (codepoint > MAX_CODEPOINT) {
-            log.err("failed to get glyph for codepoint: {}", .{codepoint});
-            return &self.glyphs[0];
+    fn init(font: *Font, font_size: u32, atlas_index: u32) !*FontAtlas {
+        var atlas = try g_renderer.allocator.create(FontAtlas);
+
+        _ = c.FT_Set_Char_Size(font.face, 0, font_size << 6, 72, 72);
+
+        var max_dim =
+            (1 + @intCast(u32, font.face.*.size.*.metrics.height >> 6)) *
+            @floatToInt(
+            u32,
+            std.math.ceil(
+                std.math.sqrt(@as(f64, ATLAS_CODEPOINTS)),
+            ),
+        );
+        var tex_width: u32 = 1;
+        while (tex_width < max_dim) {
+            tex_width <<= 1;
         }
-        return &self.glyphs[codepoint];
+        var tex_height: u32 = tex_width;
+
+        atlas.width = @intCast(i32, tex_width);
+        atlas.height = @intCast(i32, tex_height);
+
+        var pixels: []u8 = try g_renderer.allocator.alloc(
+            u8,
+            @intCast(usize, atlas.width * atlas.height * 4),
+        );
+        defer g_renderer.allocator.free(pixels);
+
+        var pen_x: u32 = 0;
+        var pen_y: u32 = 0;
+
+        var i: u32 = 0;
+        while (i < ATLAS_CODEPOINTS) : (i += 1) {
+            _ = c.FT_Load_Char(
+                font.face,
+                ATLAS_CODEPOINTS * atlas_index + i,
+                c.FT_LOAD_RENDER | c.FT_LOAD_FORCE_AUTOHINT | c.FT_LOAD_TARGET_LIGHT,
+            );
+            var bmp: *c.FT_Bitmap = &font.face.*.glyph.*.bitmap;
+
+            if (pen_x + bmp.width >= tex_width) {
+                pen_x = 0;
+                pen_y += @intCast(u32, (font.face.*.size.*.metrics.height >> 6) + 1);
+            }
+
+            var row: u32 = 0;
+            while (row < bmp.rows) : (row += 1) {
+                var col: u32 = 0;
+                while (col < bmp.width) : (col += 1) {
+                    var x = pen_x + col;
+                    var y = pen_y + row;
+                    var value: u8 = bmp.buffer[row * @intCast(u32, bmp.pitch) + col];
+                    pixels[(y * tex_width + x) * 4 + 0] = 255;
+                    pixels[(y * tex_width + x) * 4 + 1] = 255;
+                    pixels[(y * tex_width + x) * 4 + 2] = 255;
+                    pixels[(y * tex_width + x) * 4 + 3] = value;
+                }
+            }
+
+            atlas.glyphs[i].x = @intCast(i32, pen_x);
+            atlas.glyphs[i].y = @intCast(i32, pen_y);
+            atlas.glyphs[i].w = @intCast(i32, bmp.width);
+            atlas.glyphs[i].h = @intCast(i32, bmp.rows);
+
+            atlas.glyphs[i].yoff = font.face.*.glyph.*.bitmap_top;
+            atlas.glyphs[i].xoff = font.face.*.glyph.*.bitmap_left;
+            atlas.glyphs[i].advance = @intCast(i32, font.face.*.glyph.*.advance.x >> 6);
+
+            pen_x += bmp.width + 1;
+        }
+
+        c.glGenTextures(1, &atlas.texture);
+        c.glBindTexture(c.GL_TEXTURE_2D, atlas.texture);
+
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_REPEAT);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_REPEAT);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_NEAREST);
+        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_NEAREST);
+
+        c.glTexImage2D(
+            c.GL_TEXTURE_2D,
+            0,
+            c.GL_RGBA,
+            atlas.width,
+            atlas.height,
+            0,
+            c.GL_RGBA,
+            c.GL_UNSIGNED_BYTE,
+            pixels.ptr,
+        );
+
+        return atlas;
+    }
+
+    fn deinit(self: *const @This()) void {
+        c.glDeleteTextures(1, &self.texture);
+        g_renderer.allocator.destroy(self);
+    }
+
+    fn getGlyph(self: *const @This(), codepoint: u32) callconv(.Inline) *const Glyph {
+        return &self.glyphs[codepoint % ATLAS_CODEPOINTS];
+    }
+};
+
+const FontAtlasCollection = struct {
+    atlases: std.ArrayList(?*FontAtlas),
+
+    fn init() FontAtlasCollection {
+        return FontAtlasCollection{
+            .atlases = std.ArrayList(?*FontAtlas).init(g_renderer.allocator),
+        };
+    }
+
+    fn deinit(self: *const @This()) void {
+        for (self.atlases.items) |maybe_atlas| {
+            if (maybe_atlas) |atlas| {
+                atlas.deinit();
+            }
+        }
+        self.atlases.deinit();
+    }
+
+    fn getAtlas(
+        self: *@This(),
+        font: *Font,
+        font_size: u32,
+        codepoint: u32,
+    ) !*FontAtlas {
+        const atlas_index = codepoint / ATLAS_CODEPOINTS;
+        if (atlas_index >= self.atlases.items.len) {
+            const old_size = self.atlases.items.len;
+            try self.atlases.resize(atlas_index + 1);
+            var i: usize = old_size;
+            while (i < self.atlases.items.len) : (i += 1) {
+                // Initialize new atlases to null
+                self.atlases.items[i] = null;
+            }
+        }
+
+        if (self.atlases.items[atlas_index]) |atlas| {
+            return atlas;
+        }
+
+        const new_atlas = try FontAtlas.init(
+            font,
+            font_size,
+            atlas_index,
+        );
+        self.atlases.items[atlas_index] = new_atlas;
+        return new_atlas;
     }
 };
 
 pub const Font = struct {
     data: []u8,
     face: c.FT_Face,
-    atlases: [MAX_FONT_SIZE + 1]?*FontAtlas = [_]?*FontAtlas{null} ** (MAX_FONT_SIZE + 1),
+    atlas_collections: std.ArrayList(?FontAtlasCollection),
 
     pub fn init(base_font_name: []const u8, style: []const u8) !*Font {
         const full_font_name = try mem.concat(
@@ -211,24 +354,27 @@ pub const Font = struct {
         self.* = .{
             .data = file_data,
             .face = face,
+            .atlas_collections = std.ArrayList(?FontAtlasCollection)
+                .init(g_renderer.allocator),
         };
         return self;
     }
 
     pub fn deinit(self: *@This()) void {
         _ = c.FT_Done_Face(self.face);
-        for (self.atlases) |maybe_atlas| {
-            if (maybe_atlas) |atlas| {
-                c.glDeleteTextures(1, &atlas.texture);
-                g_renderer.allocator.destroy(atlas);
+        for (self.atlas_collections.items) |maybe_collection| {
+            if (maybe_collection) |collection| {
+                collection.deinit();
             }
         }
+        self.atlas_collections.deinit();
         g_renderer.allocator.free(self.data);
         g_renderer.allocator.destroy(self);
     }
 
     fn getPath(allocator: *Allocator, font_name: [*:0]const u8) ![*:0]const u8 {
-        var pat: *c.FcPattern = c.FcNameParse(font_name) orelse return error.FontConfigFailedToParseName;
+        var pat: *c.FcPattern = c.FcNameParse(font_name) orelse
+            return error.FontConfigFailedToParseName;
         defer c.FcPatternDestroy(pat);
 
         _ = c.FcConfigSubstitute(
@@ -259,115 +405,45 @@ pub const Font = struct {
         return error.FontConfigFailedToGetPath;
     }
 
-    pub fn getAtlas(self: *@This(), font_size: u32) !*FontAtlas {
-        std.debug.assert(font_size <= MAX_FONT_SIZE);
+    fn getAtlas(self: *@This(), font_size: u32, codepoint: u32) !*const FontAtlas {
+        const collection_index = @intCast(usize, font_size);
 
-        if (self.atlases[@intCast(usize, font_size)]) |atlas| return atlas;
-
-        var atlas = try g_renderer.allocator.create(FontAtlas);
-
-        _ = c.FT_Set_Char_Size(self.face, 0, font_size << 6, 72, 72);
-
-        var max_dim = (1 + @intCast(u32, self.face.*.size.*.metrics.height >> 6)) *
-            @floatToInt(u32, std.math.ceil(std.math.sqrt(@as(f64, MAX_CODEPOINT))));
-        var tex_width: u32 = 1;
-        while (tex_width < max_dim) {
-            tex_width <<= 1;
-        }
-        var tex_height: u32 = tex_width;
-
-        atlas.width = @intCast(i32, tex_width);
-        atlas.height = @intCast(i32, tex_height);
-
-        var pixels: []u8 = try g_renderer.allocator.alloc(
-            u8,
-            @intCast(usize, atlas.width * atlas.height * 4),
-        );
-        defer g_renderer.allocator.free(pixels);
-
-        var pen_x: u32 = 0;
-        var pen_y: u32 = 0;
-
-        var i: u32 = 0;
-        while (i < MAX_CODEPOINT + 1) : (i += 1) {
-            _ = c.FT_Load_Char(
-                self.face,
-                i,
-                c.FT_LOAD_RENDER | c.FT_LOAD_FORCE_AUTOHINT | c.FT_LOAD_TARGET_LIGHT,
-            );
-            var bmp: *c.FT_Bitmap = &self.face.*.glyph.*.bitmap;
-
-            if (pen_x + bmp.width >= tex_width) {
-                pen_x = 0;
-                pen_y += @intCast(u32, (self.face.*.size.*.metrics.height >> 6) + 1);
+        if (collection_index >= self.atlas_collections.items.len) {
+            const old_size = self.atlas_collections.items.len;
+            try self.atlas_collections.resize(collection_index + 1);
+            var i: usize = old_size;
+            while (i < self.atlas_collections.items.len) : (i += 1) {
+                // Initialize new collections to null
+                self.atlas_collections.items[i] = null;
             }
-
-            var row: u32 = 0;
-            while (row < bmp.rows) : (row += 1) {
-                var col: u32 = 0;
-                while (col < bmp.width) : (col += 1) {
-                    var x = pen_x + col;
-                    var y = pen_y + row;
-                    var value: u8 = bmp.buffer[row * @intCast(u32, bmp.pitch) + col];
-                    pixels[(y * tex_width + x) * 4 + 0] = 255;
-                    pixels[(y * tex_width + x) * 4 + 1] = 255;
-                    pixels[(y * tex_width + x) * 4 + 2] = 255;
-                    pixels[(y * tex_width + x) * 4 + 3] = value;
-                }
-            }
-
-            atlas.glyphs[i].x = @intCast(i32, pen_x);
-            atlas.glyphs[i].y = @intCast(i32, pen_y);
-            atlas.glyphs[i].w = @intCast(i32, bmp.width);
-            atlas.glyphs[i].h = @intCast(i32, bmp.rows);
-
-            atlas.glyphs[i].yoff = self.face.*.glyph.*.bitmap_top;
-            atlas.glyphs[i].xoff = self.face.*.glyph.*.bitmap_left;
-            atlas.glyphs[i].advance = @intCast(i32, self.face.*.glyph.*.advance.x >> 6);
-
-            pen_x += bmp.width + 1;
         }
 
-        c.glGenTextures(1, &atlas.texture);
-        c.glBindTexture(c.GL_TEXTURE_2D, atlas.texture);
+        if (self.atlas_collections.items[collection_index]) |*collection| {
+            return try collection.getAtlas(self, font_size, codepoint);
+        }
 
-        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_S, c.GL_REPEAT);
-        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_WRAP_T, c.GL_REPEAT);
-        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MIN_FILTER, c.GL_NEAREST);
-        c.glTexParameteri(c.GL_TEXTURE_2D, c.GL_TEXTURE_MAG_FILTER, c.GL_NEAREST);
-
-        c.glTexImage2D(
-            c.GL_TEXTURE_2D,
-            0,
-            c.GL_RGBA,
-            atlas.width,
-            atlas.height,
-            0,
-            c.GL_RGBA,
-            c.GL_UNSIGNED_BYTE,
-            pixels.ptr,
-        );
-
-        self.atlases[@intCast(usize, font_size)] = atlas;
-
-        return atlas;
+        self.atlas_collections.items[collection_index] = FontAtlasCollection.init();
+        const new_collection = &self.atlas_collections.items[collection_index].?;
+        return try new_collection.getAtlas(self, font_size, codepoint);
     }
 
     pub fn getCharHeight(self: *@This(), font_size: u32) i32 {
         return @floatToInt(i32, std.math.round(
-            @intToFloat(f64, self.face.*.height * @intCast(i32, font_size)) / @intToFloat(f64, self.face.*.units_per_EM),
+            @intToFloat(f64, self.face.*.height * @intCast(i32, font_size)) /
+                @intToFloat(f64, self.face.*.units_per_EM),
         ));
     }
 
     pub fn getCharAdvance(self: *@This(), font_size: u32, codepoint: u32) !i32 {
-        const atlas = try self.getAtlas(font_size);
+        const atlas = try self.getAtlas(font_size, codepoint);
         const glyph = atlas.getGlyph(codepoint);
         return glyph.advance;
     }
 
     pub fn getCharMaxAscender(self: *@This(), font_size: u32) i32 {
         return @floatToInt(i32, std.math.round(
-            @intToFloat(f64, self.face.*.ascender * @intCast(i32, font_size)) / @intToFloat(f64, self.face.*.units_per_EM),
+            @intToFloat(f64, self.face.*.ascender * @intCast(i32, font_size)) /
+                @intToFloat(f64, self.face.*.units_per_EM),
         ));
     }
 };
@@ -406,7 +482,8 @@ pub fn init(
     if (c.FcInit() != c.FcTrue) {
         return error.FontConfigInitError;
     }
-    var fc_config = c.FcInitLoadConfigAndFonts() orelse return error.FontConfigInitError;
+    var fc_config = c.FcInitLoadConfigAndFonts() orelse
+        return error.FontConfigInitError;
 
     var ft_library: c.FT_Library = null;
     if (c.FT_Init_FreeType(&ft_library) != 0) {
@@ -719,7 +796,7 @@ pub fn drawCodepoint(
         tab_width: i32 = 4,
     },
 ) callconv(.Inline) !i32 {
-    const atlas = try font.getAtlas(font_size);
+    const atlas = try font.getAtlas(font_size, codepoint);
     const glyph = atlas.getGlyph(codepoint);
 
     const max_ascender = font.getCharMaxAscender(font_size);
@@ -767,13 +844,12 @@ pub fn drawText(
 ) callconv(.Inline) !i32 {
     var advance: i32 = 0;
 
-    const atlas = try font.getAtlas(font_size);
-
     const max_ascender = font.getCharMaxAscender(font_size);
 
     const view = try std.unicode.Utf8View.init(text);
     var iter = view.iterator();
     while (iter.nextCodepoint()) |codepoint| {
+        const atlas = try font.getAtlas(font_size, codepoint);
         const glyph = atlas.getGlyph(codepoint);
 
         var glyph_advance = glyph.*.advance;

@@ -15,6 +15,7 @@ const mem = std.mem;
 const SCRATCH_BUFFER_NAME = "** scratch **";
 const BUILD_BUFFER_NAME = "** build **";
 const MESSAGES_BUFFER_NAME = "** messages **";
+const MAX_FONT_SIZE = 128;
 
 pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
 
@@ -512,7 +513,7 @@ pub fn init(allocator: *Allocator) !void {
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
                 8,
-                renderer.MAX_FONT_SIZE,
+                MAX_FONT_SIZE,
             );
         }
     }.callback);
@@ -523,7 +524,7 @@ pub fn init(allocator: *Allocator) !void {
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
                 8,
-                renderer.MAX_FONT_SIZE,
+                MAX_FONT_SIZE,
             );
         }
     }.callback);
