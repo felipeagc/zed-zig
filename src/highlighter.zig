@@ -32,6 +32,8 @@ pub const FaceType = enum {
     punctuation,
     operator,
     function,
+    leading_whitespace,
+    trailing_whitespace,
     max,
 };
 
@@ -97,6 +99,10 @@ pub const ColorScheme = struct {
                 .{ .foreground = "#8fbfdc" },
                 // function:
                 .{ .foreground = "#fad07a" },
+                // leading_whitespace:
+                .{ .foreground = "#403c41" },
+                // trailing_whitespace:
+                .{ .foreground = "#cf6a4c" },
             },
         );
     }

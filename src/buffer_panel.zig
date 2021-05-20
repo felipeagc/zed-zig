@@ -217,8 +217,12 @@ fn drawToken(
 
     var iter = std.unicode.Utf8View.initUnchecked(text).iterator();
     while (iter.nextCodepoint()) |codepoint| {
+        const actual_codepoint = switch (face) {
+            .leading_whitespace, .trailing_whitespace => '·',
+            else => codepoint,
+        };
         advance += try renderer.drawCodepoint(
-            codepoint,
+            actual_codepoint,
             font,
             font_size,
             x + advance,
@@ -381,7 +385,7 @@ fn draw(panel: *editor.Panel, rect: renderer.Rect) anyerror!void {
 
         var advance: i32 = 0;
         var line_end_pos: usize = 0;
-        for (line.tokens.items) |token| {
+        for (line.tokens.items) |token, i| {
             advance += try self.drawToken(
                 line.content.items[line_end_pos .. line_end_pos + token.length],
                 token.face_type,
