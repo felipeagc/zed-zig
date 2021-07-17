@@ -380,7 +380,7 @@ pub const Font = struct {
         _ = c.FcConfigSubstitute(
             g_renderer.fc_config,
             pat,
-            @intToEnum(c.enum__FcMatchKind, c.FcMatchPattern),
+            c.FcMatchPattern,
         );
         c.FcDefaultSubstitute(pat);
 
@@ -398,7 +398,7 @@ pub const Font = struct {
             c.FC_FILE,
             0,
             &file,
-        ) == @intToEnum(c.enum__FcResult, c.FcResultMatch)) {
+        ) == c.FcResultMatch) {
             return try allocator.dupeZ(u8, mem.spanZ(file));
         }
 
@@ -518,7 +518,7 @@ pub fn init(
             c.GL_FLOAT,
             c.GL_FALSE,
             @sizeOf(Vertex),
-            @intToPtr(*allowzero c_void, @byteOffsetOf(Vertex, "pos")),
+            @intToPtr(*allowzero c_void, @offsetOf(Vertex, "pos")),
         );
         c.glEnableVertexAttribArray(0);
 
@@ -528,7 +528,7 @@ pub fn init(
             c.GL_FLOAT,
             c.GL_FALSE,
             @sizeOf(Vertex),
-            @intToPtr(*allowzero c_void, @byteOffsetOf(Vertex, "texcoord")),
+            @intToPtr(*allowzero c_void, @offsetOf(Vertex, "texcoord")),
         );
         c.glEnableVertexAttribArray(1);
 
@@ -538,7 +538,7 @@ pub fn init(
             c.GL_UNSIGNED_BYTE,
             c.GL_TRUE,
             @sizeOf(Vertex),
-            @intToPtr(*allowzero c_void, @byteOffsetOf(Vertex, "color")),
+            @intToPtr(*allowzero c_void, @offsetOf(Vertex, "color")),
         );
         c.glEnableVertexAttribArray(2);
 

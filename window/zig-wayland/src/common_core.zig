@@ -39,7 +39,7 @@ pub const Array = extern struct {
 };
 
 /// A 24.8 signed fixed-point number.
-pub const Fixed = extern enum(i32) {
+pub const Fixed = enum(i32) {
     _,
 
     pub fn toInt(f: Fixed) i24 {
@@ -78,7 +78,7 @@ pub fn Dispatcher(comptime Obj: type, comptime Data: type) type {
             implementation: ?*const c_void,
             object: if (client) *wayland.client.wl.Proxy else *wayland.server.wl.Resource,
             opcode: u32,
-            message: *const Message,
+            _: *const Message,
             args: [*]Argument,
         ) callconv(.C) c_int {
             inline for (@typeInfo(Payload).Union.fields) |payload_field, payload_num| {
@@ -118,13 +118,13 @@ test "Fixed" {
     {
         const initial: f64 = 10.5301837;
         const val = Fixed.fromDouble(initial);
-        testing.expectWithinMargin(initial, val.toDouble(), 1 / 256.);
-        testing.expectEqual(@as(i24, 10), val.toInt());
+        try testing.expectApproxEqAbs(initial, val.toDouble(), 1.0 / 256.0);
+        try testing.expectEqual(@as(i24, 10), val.toInt());
     }
 
     {
         const val = Fixed.fromInt(10);
-        testing.expectEqual(@as(f64, 10.0), val.toDouble());
-        testing.expectEqual(@as(i24, 10), val.toInt());
+        try testing.expectEqual(@as(f64, 10.0), val.toDouble());
+        try testing.expectEqual(@as(i24, 10), val.toInt());
     }
 }

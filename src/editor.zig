@@ -74,7 +74,7 @@ const Editor = struct {
 
     task_req_channel: util.Channel(TaskReq, 1024) = .{},
     task_resp_channel: util.Channel(TaskResp, 1024) = .{},
-    task_threads: [4]*std.Thread,
+    task_threads: [4]std.Thread,
 
     messages_buffer: *Buffer,
     scratch_buffer: *Buffer,
@@ -102,7 +102,7 @@ pub const PanelVT = struct {
 pub const Panel = struct {
     vt: *const PanelVT,
 
-    pub fn init(allocator: *Allocator, vt: *const PanelVT) !Panel {
+    pub fn init(vt: *const PanelVT) Panel {
         return Panel{
             .vt = vt,
         };
@@ -128,7 +128,7 @@ pub const Panel = struct {
         return false;
     }
 
-    pub fn as(panel: *Panel, comptime T: type) callconv(.Inline) ?*T {
+    pub inline fn as(panel: *Panel, comptime T: type) ?*T {
         if (&T.VT == panel.vt) {
             return @fieldParentPtr(T, "panel", panel);
         }
@@ -305,6 +305,9 @@ fn executeCommand(panel: *Panel, args: [][]const u8) anyerror!void {
 }
 
 fn commandNewSplit(panel: *Panel, args: [][]const u8) anyerror!void {
+    _ = panel;
+    _ = args;
+
     try g_editor.panels.insert(
         g_editor.selected_panel + 1,
         try BufferPanel.init(
@@ -315,6 +318,9 @@ fn commandNewSplit(panel: *Panel, args: [][]const u8) anyerror!void {
 }
 
 fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
+    _ = panel;
+    _ = args;
+
     const removed_panel = g_editor.panels.orderedRemove(g_editor.selected_panel);
     removed_panel.deinit();
 
@@ -328,7 +334,7 @@ fn commandCloseSplit(panel: *Panel, args: [][]const u8) anyerror!void {
     }
 }
 
-fn taskRunner(_: void) void {
+fn taskRunner() void {
     outer: while (true) {
         const task_req = g_editor.task_req_channel.receive();
         defer renderer.pushEvent(.dummy);
@@ -387,6 +393,9 @@ fn taskRunner(_: void) void {
 }
 
 fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
+    _ = panel;
+    _ = args;
+
     const command: []const u8 = "zig build";
     const command_dupe = try g_editor.allocator.dupe(u8, command);
 
@@ -502,13 +511,16 @@ pub fn init(allocator: *Allocator) !void {
     };
 
     for (g_editor.task_threads) |*task_thread| {
-        task_thread.* = try std.Thread.spawn(taskRunner, {});
+        task_thread.* = try std.Thread.spawn(.{}, taskRunner, .{});
     }
 
     try registerPanelVT(&@import("buffer_panel.zig").VT);
 
     try g_editor.global_keymap.bind("C-=", struct {
         fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
+            _ = panel;
+            _ = args;
+
             g_editor.options.main_font_size +%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -520,6 +532,9 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind("C--", struct {
         fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
+            _ = panel;
+            _ = args;
+
             g_editor.options.main_font_size -%= 1;
             g_editor.options.main_font_size = std.math.clamp(
                 g_editor.options.main_font_size,
@@ -531,6 +546,9 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind("C-j", struct {
         fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
+            _ = panel;
+            _ = args;
+
             g_editor.selected_panel +%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
@@ -538,6 +556,9 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind("C-k", struct {
         fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
+            _ = panel;
+            _ = args;
+
             g_editor.selected_panel -%= 1;
             g_editor.selected_panel %= (g_editor.panels.items.len);
         }
@@ -545,6 +566,8 @@ pub fn init(allocator: *Allocator) !void {
 
     try g_editor.global_keymap.bind(":", struct {
         fn callback(panel: *Panel, args: [][]const u8) anyerror!void {
+            _ = args;
+
             var command_count: usize = 0;
             command_count += g_editor.global_commands.commands.count();
             if (panel.vt.command_registry) |panel_command_registry| {
@@ -556,14 +579,14 @@ pub fn init(allocator: *Allocator) !void {
 
             var command_index: usize = 0;
 
-            for (g_editor.global_commands.commands.items()) |*entry| {
-                options[command_index] = entry.key;
+            for (g_editor.global_commands.commands.keys()) |command_name| {
+                options[command_index] = command_name;
                 command_index += 1;
             }
 
             if (panel.vt.command_registry) |panel_command_registry| {
-                for (panel_command_registry.commands.items()) |*entry| {
-                    options[command_index] = entry.key;
+                for (panel_command_registry.commands.keys()) |command_name| {
+                    options[command_index] = command_name;
                     command_index += 1;
                 }
             }
@@ -601,18 +624,25 @@ pub fn init(allocator: *Allocator) !void {
         @embedFile("../filetypes/zig.json"),
     ));
 
+    try registerFileType(try FileType.init(
+        allocator,
+        "ocaml",
+        @embedFile("../filetypes/ocaml.json"),
+    ));
+
     logMessage("Message 1\n", .{}) catch {};
     logMessage("Message 2\n", .{}) catch {};
 }
 
 pub fn deinit() void {
     for (g_editor.task_threads) |task_thread| {
+        _ = task_thread;
         g_editor.task_req_channel.send(.quit) catch |err| {
             std.log.err("failed to send quit task to task runner: {}", .{err});
         };
     }
     for (g_editor.task_threads) |task_thread| {
-        task_thread.wait();
+        task_thread.join();
     }
 
     for (g_editor.panels.items) |panel| {
@@ -638,7 +668,7 @@ pub fn deinit() void {
     {
         var iter = g_editor.filetypes.iterator();
         while (iter.next()) |entry| {
-            entry.value.deinit();
+            entry.value_ptr.*.deinit();
         }
     }
 
@@ -926,7 +956,7 @@ const DirIterator = struct {
             }
         }
 
-        if (self.stack.popOrNull()) |dir| {}
+        if (self.stack.popOrNull()) |_| {}
 
         return null;
     }

@@ -104,14 +104,6 @@
 				{
 					"face": "punctuation",
 					"pattern": "([\\(\\)\\[\\]\\{\\}])"
-				},
-				{
-					"face": "leading_whitespace",
-					"pattern": "^\\s+"
-				},
-				{
-					"face": "trailing_whitespace",
-					"pattern": "\\s+$"
 				}
 			]
 		}

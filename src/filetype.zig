@@ -52,6 +52,7 @@ pub fn init(allocator: *Allocator, name: []const u8, json_desc: []const u8) !*Fi
 
     var stream = std.json.TokenStream.init(json_desc);
 
+    @setEvalBranchQuota(2000);
     var options = try std.json.parse(Options, &stream, json_options);
     defer std.json.parseFree(Options, options, json_options);
 

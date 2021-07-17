@@ -258,7 +258,7 @@ fn convertArgumentValue(comptime T: type, textInput: []const u8) !T {
             return try parseBoolean(textInput)
         else
             return true, // boolean options are always true
-        .Int => |int| return try parseInt(T, textInput),
+        .Int => |_| return try parseInt(T, textInput),
         .Float => return try std.fmt.parseFloat(T, textInput),
         .Enum => {
             if (@hasDecl(T, "parse")) {

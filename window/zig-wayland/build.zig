@@ -8,23 +8,19 @@ pub fn build(b: *zbs.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const scanner = ScanProtocolsStep.create(b);
-    // inline for ([_][]const u8{ "globals", "list", "listener", "seats" }) |example| {
-    //     const exe = b.addExecutable(example, "example/" ++ example ++ ".zig");
-    //     exe.setTarget(target);
-    //     exe.setBuildMode(mode);
+    inline for ([_][]const u8{ "globals", "list", "listener", "seats" }) |example| {
+        const exe = b.addExecutable(example, "example/" ++ example ++ ".zig");
+        exe.setTarget(target);
+        exe.setBuildMode(mode);
 
-    //     exe.step.dependOn(&scanner.step);
-    //     exe.addPackage(scanner.getPkg());
-    //     scanner.addCSource(exe);
-    //     exe.linkLibC();
-    //     exe.linkSystemLibrary("wayland-client");
+        exe.step.dependOn(&scanner.step);
+        exe.addPackage(scanner.getPkg());
+        scanner.addCSource(exe);
+        exe.linkLibC();
+        exe.linkSystemLibrary("wayland-client");
 
-    //     exe.install();
-    // }
-
-
-    scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
-    scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
+        exe.install();
+    }
 
     const test_step = b.step("test", "Run the tests");
     for ([_][]const u8{ "src/scanner.zig", "src/common_core.zig" }) |file| {
@@ -69,7 +65,7 @@ pub const ScanProtocolsStep = struct {
         const self = ally.create(ScanProtocolsStep) catch unreachable;
         self.* = .{
             .builder = builder,
-            .step = zbs.Step.init(.Custom, "Scan Protocols", ally, make),
+            .step = zbs.Step.init(.custom, "Scan Protocols", ally, make),
             .out_path = fs.path.resolve(ally, &[_][]const u8{
                 builder.build_root,
                 builder.cache_root,
@@ -129,7 +125,7 @@ pub const ScanProtocolsStep = struct {
         const ally = self.builder.allocator;
         return .{
             .name = "wayland",
-            .path = fs.path.join(ally, &[_][]const u8{ self.out_path, "wayland.zig" }) catch unreachable,
+            .path = .{.path = fs.path.join(ally, &[_][]const u8{ self.out_path, "wayland.zig" }) catch unreachable},
         };
     }
 

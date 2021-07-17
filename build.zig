@@ -41,7 +41,7 @@ pub fn build(b: *std.build.Builder) void {
 
     exe.addPackage(std.build.Pkg{
         .name = "window",
-        .path = "./window/common.zig",
+        .path = .{.path = "./window/common.zig"},
         .dependencies = &.{
             scanner.getPkg(),
         },

@@ -25,11 +25,11 @@ pub const KeyMap = struct {
     pub fn deinit(self: *@This()) void {
         var iter = self.map.iterator();
         while (iter.next()) |entry| {
-            if (entry.value.* == .submap) {
-                entry.value.submap.deinit();
+            if (entry.value_ptr.*.* == .submap) {
+                entry.value_ptr.*.submap.deinit();
             }
-            self.allocator.destroy(entry.value);
-            self.allocator.free(entry.key);
+            self.allocator.destroy(entry.value_ptr.*);
+            self.allocator.free(entry.key_ptr.*);
         }
         self.map.deinit();
     }

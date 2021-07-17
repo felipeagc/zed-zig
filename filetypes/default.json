@@ -13,16 +13,7 @@
 		{
 			"name": "root",
 			"default_face": "default",
-			"patterns": [
-				{
-					"face": "leading_whitespace",
-					"pattern": "^\\s+"
-				},
-				{
-					"face": "trailing_whitespace",
-					"pattern": "\\s+$"
-				}
-			]
+			"patterns": []
 		}
 	]
 }

@@ -1,6 +1,7 @@
 const std = @import("std");
 const fs = std.fs;
 const mem = std.mem;
+const fmtId = std.zig.fmtId;
 
 const xml = @import("xml.zig");
 
@@ -32,10 +33,10 @@ pub fn scan(root_dir: fs.Dir, out_path: []const u8, wayland_xml: []const u8, pro
 
         var iter = scanner.client.iterator();
         while (iter.next()) |entry| {
-            try writer.print("pub const {s} = struct {{", .{entry.key});
-            if (mem.eql(u8, entry.key, "wl"))
+            try writer.print("pub const {s} = struct {{", .{entry.key_ptr.*});
+            if (mem.eql(u8, entry.key_ptr.*, "wl"))
                 try writer.writeAll("pub usingnamespace @import(\"wayland_client_core.zig\");\n");
-            for (entry.value.items) |generated_file|
+            for (entry.value_ptr.items) |generated_file|
                 try writer.print("pub usingnamespace @import(\"{s}\");", .{generated_file});
             try writer.writeAll("};\n");
         }
@@ -52,10 +53,10 @@ pub fn scan(root_dir: fs.Dir, out_path: []const u8, wayland_xml: []const u8, pro
 
         var iter = scanner.server.iterator();
         while (iter.next()) |entry| {
-            try writer.print("pub const {s} = struct {{", .{entry.key});
-            if (mem.eql(u8, entry.key, "wl"))
+            try writer.print("pub const {s} = struct {{", .{entry.key_ptr.*});
+            if (mem.eql(u8, entry.key_ptr.*, "wl"))
                 try writer.writeAll("pub usingnamespace @import(\"wayland_server_core.zig\");\n");
-            for (entry.value.items) |generated_file|
+            for (entry.value_ptr.items) |generated_file|
                 try writer.print("pub usingnamespace @import(\"{s}\");", .{generated_file});
             try writer.writeAll("};\n");
         }
@@ -69,8 +70,8 @@ pub fn scan(root_dir: fs.Dir, out_path: []const u8, wayland_xml: []const u8, pro
 
         var iter = scanner.common.iterator();
         while (iter.next()) |entry| {
-            try writer.print("pub const {s} = struct {{", .{entry.key});
-            for (entry.value.items) |generated_file|
+            try writer.print("pub const {s} = struct {{", .{entry.key_ptr.*});
+            for (entry.value_ptr.items) |generated_file|
                 try writer.print("pub usingnamespace @import(\"{s}\");", .{generated_file});
             try writer.writeAll("};\n");
         }
@@ -107,7 +108,7 @@ const Scanner = struct {
             const client_file = try out_dir.createFile(client_filename, .{});
             defer client_file.close();
             try protocol.emitClient(client_file.writer());
-            try (try scanner.client.getOrPutValue(protocol_namespace, .{})).value.append(gpa, client_filename);
+            try (try scanner.client.getOrPutValue(protocol_namespace, .{})).value_ptr.append(gpa, client_filename);
         }
 
         {
@@ -115,7 +116,7 @@ const Scanner = struct {
             const server_file = try out_dir.createFile(server_filename, .{});
             defer server_file.close();
             try protocol.emitServer(server_file.writer());
-            try (try scanner.server.getOrPutValue(protocol_namespace, .{})).value.append(gpa, server_filename);
+            try (try scanner.server.getOrPutValue(protocol_namespace, .{})).value_ptr.append(gpa, server_filename);
         }
 
         {
@@ -123,7 +124,7 @@ const Scanner = struct {
             const common_file = try out_dir.createFile(common_filename, .{});
             defer common_file.close();
             try protocol.emitCommon(common_file.writer());
-            try (try scanner.common.getOrPutValue(protocol_namespace, .{})).value.append(gpa, common_filename);
+            try (try scanner.common.getOrPutValue(protocol_namespace, .{})).value_ptr.append(gpa, common_filename);
         }
     }
 };
@@ -298,24 +299,21 @@ const Interface = struct {
     }
 
     fn emit(interface: Interface, side: Side, namespace: []const u8, writer: anytype) !void {
-        var buf: [1024]u8 = undefined;
-        var fbs = std.io.fixedBufferStream(&buf);
-        try printIdentifier(fbs.writer(), case(.title, trimPrefix(interface.name)));
-        const title_case = fbs.getWritten();
-        try printIdentifier(fbs.writer(), trimPrefix(interface.name));
-        const snake_case = fbs.getWritten()[title_case.len..];
-
         try writer.print(
-            \\pub const {s} = opaque {{
-            \\ pub const getInterface = common.{s}.{s}.getInterface;
-        , .{ title_case, namespace, snake_case });
+            \\pub const {[type]} = opaque {{
+            \\ pub const getInterface = common.{[namespace]}.{[interface]}.getInterface;
+        , .{
+            .@"type" = titleCaseTrim(interface.name),
+            .namespace = fmtId(namespace),
+            .interface = fmtId(trimPrefix(interface.name)),
+        });
 
         for (interface.enums.items) |e| {
-            try writer.writeAll("pub const ");
-            try printIdentifier(writer, case(.title, e.name));
-            try writer.print(" = common.{s}.{s}.", .{ namespace, snake_case });
-            try printIdentifier(writer, case(.title, e.name));
-            try writer.writeAll(";\n");
+            try writer.print("pub const {[type]} = common.{[namespace]}.{[interface]}.{[type]};\n", .{
+                .@"type" = titleCase(e.name),
+                .namespace = fmtId(namespace),
+                .interface = fmtId(trimPrefix(interface.name)),
+            });
         }
 
         if (side == .client) {
@@ -324,17 +322,20 @@ const Interface = struct {
                 for (interface.events.items) |event| try event.emitField(.client, writer);
                 try writer.writeAll("};\n");
                 try writer.print(
-                    \\pub fn setListener(
-                    \\    _{s}: *{s},
+                    \\pub inline fn setListener(
+                    \\    _{[interface]}: *{[type]},
                     \\    comptime T: type,
-                    \\    _listener: fn ({s}: *{s}, event: Event, data: T) void,
+                    \\    _listener: fn ({[interface]}: *{[type]}, event: Event, data: T) void,
                     \\    _data: T,
-                    \\) callconv(.Inline) void {{
-                    \\    const _proxy = @ptrCast(*client.wl.Proxy, _{s});
+                    \\) void {{
+                    \\    const _proxy = @ptrCast(*client.wl.Proxy, _{[interface]});
                     \\    const _mut_data = @intToPtr(?*c_void, @ptrToInt(_data));
-                    \\    _proxy.addDispatcher(common.Dispatcher({s}, T).dispatcher, _listener, _mut_data);
+                    \\    _proxy.addDispatcher(common.Dispatcher({[type]}, T).dispatcher, _listener, _mut_data);
                     \\}}
-                , .{ snake_case, title_case, snake_case, title_case, snake_case, title_case });
+                , .{
+                    .interface = fmtId(trimPrefix(interface.name)),
+                    .@"type" = titleCaseTrim(interface.name),
+                });
             }
 
             for (interface.requests.items) |request, opcode|
@@ -344,22 +345,17 @@ const Interface = struct {
                 try writer.writeAll(@embedFile("client_display_functions.zig"));
         } else {
             try writer.print(
-                \\pub fn create(_client: *server.wl.Client, _version: u32, _id: u32) !*{s} {{
-                \\    return @ptrCast(*{s}, try server.wl.Resource.create(_client, {s}, _version, _id));
+                \\pub fn create(_client: *server.wl.Client, _version: u32, _id: u32) !*{(tc)} {{
+                \\    return @ptrCast(*{[type]}, try server.wl.Resource.create(_client, {[type]}, _version, _id));
+                \\}}pub fn destroy(_{[interface]}: *{[type]}) void {{
+                \\    return @ptrCast(*server.wl.Resource, _{[interface]}).destroy();
+                \\}}pub fn fromLink(_link: *server.wl.list.Link) *{[type]} {{
+                \\    return @ptrCast(*{[type]}, server.wl.Resource.fromLink(_link));
                 \\}}
-            , .{ title_case, title_case, title_case });
-
-            try writer.print(
-                \\pub fn destroy(_{s}: *{s}) void {{
-                \\    return @ptrCast(*server.wl.Resource, _{s}).destroy();
-                \\}}
-            , .{ snake_case, title_case, snake_case });
-
-            try writer.print(
-                \\pub fn fromLink(_link: *server.wl.list.Link) *{s} {{
-                \\    return @ptrCast(*{s}, server.wl.Resource.fromLink(_link));
-                \\}}
-            , .{ title_case, title_case });
+            , .{
+                .@"type" = titleCaseTrim(interface.name),
+                .interface = fmtId(trimPrefix(interface.name)),
+            });
 
             for ([_][2][]const u8{
                 .{ "getLink", "*server.wl.list.Link" },
@@ -369,20 +365,28 @@ const Interface = struct {
                 .{ "postNoMemory", "void" },
             }) |func|
                 try writer.print(
-                    \\pub fn {s}(_{s}: *{s}) {s} {{
-                    \\    return @ptrCast(*server.wl.Resource, _{s}).{s}();
+                    \\pub fn {[function]}(_{[interface]}: *{[type]}) {[return_type]} {{
+                    \\    return @ptrCast(*server.wl.Resource, _{[interface]}).{[function]}();
                     \\}}
-                , .{ func[0], snake_case, title_case, func[1], snake_case, func[0] });
+                , .{
+                    .function = camelCase(func[0]),
+                    .interface = fmtId(trimPrefix(interface.name)),
+                    .@"type" = titleCaseTrim(interface.name),
+                    .return_type = camelCase(func[1]),
+                });
 
             const has_error = for (interface.enums.items) |e| {
                 if (mem.eql(u8, e.name, "error")) break true;
             } else false;
             if (has_error) {
                 try writer.print(
-                    \\pub fn postError({s}: *{s}, _err: Error, _message: [*:0]const u8) void {{
-                    \\    return @ptrCast(*server.wl.Resource, {s}).postError(@intCast(u32, @enumToInt(_err)), _message);
+                    \\pub fn postError({[interface]}: *{[type]}, _err: Error, _message: [*:0]const u8) void {{
+                    \\    return @ptrCast(*server.wl.Resource, {[interface]}).postError(@intCast(u32, @enumToInt(_err)), _message);
                     \\}}
-                , .{ snake_case, title_case, snake_case });
+                , .{
+                    .interface = fmtId(trimPrefix(interface.name)),
+                    .@"type" = titleCaseTrim(interface.name),
+                });
             }
 
             if (interface.requests.items.len > 0) {
@@ -391,38 +395,43 @@ const Interface = struct {
                 try writer.writeAll("};\n");
                 @setEvalBranchQuota(2500);
                 try writer.print(
-                    \\pub fn setHandler(
-                    \\    _{s}: *{s},
+                    \\pub inline fn setHandler(
+                    \\    _{[interface]}: *{[type]},
                     \\    comptime T: type,
-                    \\    handle_request: fn ({s}: *{s}, request: Request, data: T) void,
-                    \\    comptime handle_destroy: ?fn ({s}: *{s}, data: T) void,
+                    \\    handle_request: fn ({[interface]}: *{[type]}, request: Request, data: T) void,
+                    \\    comptime handle_destroy: ?fn ({[interface]}: *{[type]}, data: T) void,
                     \\    _data: T,
-                    \\) callconv(.Inline) void {{
-                    \\    const _resource = @ptrCast(*server.wl.Resource, _{s});
+                    \\) void {{
+                    \\    _ = _{[interface]};
+                    \\    const _resource = @ptrCast(*server.wl.Resource, _{[interface]});
                     \\    _resource.setDispatcher(
-                    \\        common.Dispatcher({s}, T).dispatcher,
+                    \\        common.Dispatcher({[type]}, T).dispatcher,
                     \\        handle_request,
                     \\        @intToPtr(?*c_void, @ptrToInt(_data)),
                     \\        if (handle_destroy) |_handler| struct {{
                     \\            fn _wrapper(__resource: *server.wl.Resource) callconv(.C) void {{
                     \\                @call(.{{ .modifier = .always_inline }}, _handler, .{{
-                    \\                    @ptrCast(*{s}, __resource),
+                    \\                    @ptrCast(*{[type]}, __resource),
                     \\                    @intToPtr(T, @ptrToInt(__resource.getUserData())),
                     \\                }});
                     \\            }}
                     \\        }}._wrapper else null,
                     \\    );
                     \\}}
-                , .{ snake_case, title_case, snake_case, title_case, snake_case, title_case, snake_case, title_case, title_case });
+                , .{
+                    .interface = fmtId(trimPrefix(interface.name)),
+                    .@"type" = titleCaseTrim(interface.name),
+                });
             } else {
                 try writer.print(
-                    \\pub fn setHandler(
-                    \\    _{s}: *{s},
+                    \\pub inline fn setHandler(
+                    \\    _{[interface]}: *{[type]},
                     \\    comptime T: type,
-                    \\    comptime handle_destroy: ?fn ({s}: *{s}, data: T) void,
+                    \\    comptime handle_destroy: ?fn ({[interface]}: *{[type]}, data: T) void,
                     \\    _data: T,
-                    \\) callconv(.Inline) void {{
-                    \\    const _resource = @ptrCast(*server.wl.Resource, {s});
+                    \\) void {{
+                    \\    _ = _{[interface]};
+                    \\    const _resource = @ptrCast(*server.wl.Resource, {[interface]});
                     \\    _resource.setDispatcher(
                     \\        null,
                     \\        null,
@@ -430,14 +439,17 @@ const Interface = struct {
                     \\        if (handle_destroy) |_handler| struct {{
                     \\            fn _wrapper(__resource: *server.wl.Resource) callconv(.C) void {{
                     \\                @call(.{{ .modifier = .always_inline }}, _handler, .{{
-                    \\                    @ptrCast(*{s}, __resource),
+                    \\                    @ptrCast(*{[type]}, __resource),
                     \\                    @intToPtr(T, @ptrToInt(__resource.getUserData())),
                     \\                }});
                     \\            }}
                     \\        }}._wrapper else null,
                     \\    );
                     \\}}
-                , .{ snake_case, title_case, snake_case, title_case, snake_case, title_case });
+                , .{
+                    .interface = fmtId(trimPrefix(interface.name)),
+                    .@"type" = titleCaseTrim(interface.name),
+                });
             }
 
             for (interface.events.items) |event, opcode|
@@ -448,8 +460,7 @@ const Interface = struct {
     }
 
     fn emitCommon(interface: Interface, writer: anytype) !void {
-        try writer.writeAll("pub const ");
-        try printIdentifier(writer, trimPrefix(interface.name));
+        try writer.print("pub const {}", .{fmtId(trimPrefix(interface.name))});
 
         // TODO: stop linking libwayland generated interface structs when
         // https://github.com/ziglang/zig/issues/131 is implemented
@@ -484,11 +495,11 @@ const Interface = struct {
 
         try writer.print(
             \\ = struct {{
-            \\ extern const {s}_interface: common.Interface;
-            \\ pub fn getInterface() callconv(.Inline) *const common.Interface {{
-            \\  return &{s}_interface;
+            \\ extern const {[interface]s}_interface: common.Interface;
+            \\ pub inline fn getInterface() *const common.Interface {{
+            \\  return &{[interface]s}_interface;
             \\ }}
-        , .{ interface.name, interface.name });
+        , .{ .interface = interface.name });
 
         for (interface.enums.items) |e| try e.emit(writer);
         try writer.writeAll("};");
@@ -574,7 +585,7 @@ const Message = struct {
     //}
 
     fn emitField(message: Message, side: Side, writer: anytype) !void {
-        try printIdentifier(writer, message.name);
+        try writer.print("{s}", .{fmtId(message.name)});
         if (message.args.items.len == 0) {
             try writer.writeAll(": void,");
             return;
@@ -582,17 +593,13 @@ const Message = struct {
         try writer.writeAll(": struct {");
         for (message.args.items) |arg| {
             if (side == .server and arg.kind == .new_id and arg.kind.new_id == null) {
-                try writer.writeAll("interface_name: [*:0]const u8, version: u32,");
-                try printIdentifier(writer, arg.name);
-                try writer.writeAll(": u32");
+                try writer.print("interface_name: [*:0]const u8, version: u32,{}: u32", .{fmtId(arg.name)});
             } else if (side == .client and arg.kind == .new_id) {
-                try printIdentifier(writer, arg.name);
-                try writer.writeAll(": *");
+                try writer.print("{}: *", .{fmtId(arg.name)});
                 try printAbsolute(.client, writer, arg.kind.new_id.?);
                 std.debug.assert(!arg.allow_null);
             } else {
-                try printIdentifier(writer, arg.name);
-                try writer.writeByte(':');
+                try writer.print("{}:", .{fmtId(arg.name)});
                 // See notes on NULL in doc comment for wl_message in wayland-util.h
                 if (side == .client and arg.kind == .object and !arg.allow_null)
                     try writer.writeByte('?');
@@ -606,41 +613,34 @@ const Message = struct {
     fn emitFn(message: Message, side: Side, writer: anytype, interface: Interface, opcode: usize) !void {
         try writer.writeAll("pub fn ");
         if (side == .server) {
-            try writer.writeAll("send");
-            try printIdentifier(writer, case(.title, message.name));
+            try writer.print("send{}", .{titleCase(message.name)});
         } else {
-            try printIdentifier(writer, case(.camel, message.name));
+            try writer.print("{}", .{camelCase(message.name)});
         }
-        try writer.writeAll("(_");
-        try printIdentifier(writer, trimPrefix(interface.name));
-        try writer.writeAll(": *");
-        try printIdentifier(writer, case(.title, trimPrefix(interface.name)));
+        try writer.print("(_{}: *{}", .{
+            fmtId(trimPrefix(interface.name)),
+            titleCaseTrim(interface.name),
+        });
         for (message.args.items) |arg| {
             if (side == .server and arg.kind == .new_id) {
-                try writer.writeAll(", _");
-                try printIdentifier(writer, arg.name);
-                try writer.writeByte(':');
+                try writer.print(", _{s}:", .{arg.name});
                 if (arg.allow_null) try writer.writeByte('?');
                 try writer.writeByte('*');
                 if (arg.kind.new_id) |iface|
-                    try printIdentifier(writer, case(.title, trimPrefix(iface)))
+                    try writer.print("{}", .{titleCaseTrim(iface)})
                 else
                     try writer.writeAll("server.wl.Resource");
             } else if (side == .client and arg.kind == .new_id) {
                 if (arg.kind.new_id == null) try writer.writeAll(", comptime T: type, _version: u32");
             } else {
-                try writer.writeAll(", _");
-                try printIdentifier(writer, arg.name);
-                try writer.writeByte(':');
+                try writer.print(", _{s}:", .{arg.name});
                 try arg.emitType(side, writer);
             }
         }
         if (side == .server or message.kind != .constructor) {
             try writer.writeAll(") void {");
         } else if (message.kind.constructor) |new_iface| {
-            try writer.writeAll(") !*");
-            try printIdentifier(writer, case(.title, trimPrefix(new_iface)));
-            try writer.writeAll("{");
+            try writer.print(") !*{}{{", .{titleCaseTrim(new_iface)});
         } else {
             try writer.writeAll(") !*T {");
         }
@@ -648,8 +648,7 @@ const Message = struct {
             try writer.writeAll("const _resource = @ptrCast(*server.wl.Resource,_")
         else
             try writer.writeAll("const _proxy = @ptrCast(*client.wl.Proxy,_");
-        try printIdentifier(writer, trimPrefix(interface.name));
-        try writer.writeAll(");");
+        try writer.print("{});", .{fmtId(trimPrefix(interface.name))});
         if (message.args.items.len > 0) {
             try writer.writeAll("var _args = [_]common.Argument{");
             for (message.args.items) |arg| {
@@ -667,14 +666,13 @@ const Message = struct {
                             const c_type = if (arg.kind == .uint) "u32" else "i32";
                             try writer.print(
                                 \\ )) {{
-                                \\    .Enum => @intCast({s}, @enumToInt(_{s})),
-                                \\    .Struct => @bitCast(u32, _{s}),
+                                \\    .Enum => @intCast({[ct]s}, @enumToInt(_{[an]})),
+                                \\    .Struct => @bitCast(u32, _{[an]}),
                                 \\    else => unreachable,
                                 \\ }}
-                            , .{ c_type, arg.name, arg.name });
+                            , .{ .ct = c_type, .an = fmtId(arg.name) });
                         } else {
-                            try writer.writeByte('_');
-                            try printIdentifier(writer, arg.name);
+                            try writer.print("_{s}", .{arg.name});
                         }
                         try writer.writeAll("},");
                     },
@@ -685,8 +683,7 @@ const Message = struct {
                             } else {
                                 try writer.writeAll(".{ .o = @ptrCast(*common.Object, _");
                             }
-                            try printIdentifier(writer, arg.name);
-                            try writer.writeAll(") },");
+                            try writer.print("{s}) }},", .{arg.name});
                         } else {
                             if (new_iface == null) {
                                 try writer.writeAll(
@@ -711,11 +708,10 @@ const Message = struct {
             },
             .constructor => |new_iface| {
                 if (new_iface) |i| {
-                    try writer.writeAll("return @ptrCast(*");
-                    try printIdentifier(writer, case(.title, trimPrefix(i)));
-                    try writer.print(", try _proxy.marshalConstructor({}, &_args, ", .{opcode});
-                    try printIdentifier(writer, case(.title, trimPrefix(i)));
-                    try writer.writeAll(".getInterface()));");
+                    try writer.print("return @ptrCast(*{[type]}, try _proxy.marshalConstructor({[opcode]}, &_args, {[type]}.getInterface()));", .{
+                        .@"type" = titleCaseTrim(i),
+                        .opcode = opcode,
+                    });
                 } else {
                     try writer.print("return @ptrCast(*T, try _proxy.marshalConstructorVersioned({}, &_args, T.getInterface(), _version));", .{opcode});
                 }
@@ -743,7 +739,7 @@ const Arg = struct {
 
     fn parse(allocator: *mem.Allocator, parser: *xml.Parser) !Arg {
         var name: ?[]const u8 = null;
-        var kind: ?std.meta.TagType(Type) = null;
+        var kind: ?std.meta.Tag(Type) = null;
         var interface: ?[]const u8 = null;
         var allow_null: ?bool = null;
         var enum_name: ?[]const u8 = null;
@@ -755,7 +751,7 @@ const Arg = struct {
                     name = try attr.dupeValue(allocator);
                 } else if (mem.eql(u8, attr.name, "type")) {
                     if (kind != null) return error.DuplicateType;
-                    kind = std.meta.stringToEnum(std.meta.TagType(Type), try attr.dupeValue(allocator)) orelse
+                    kind = std.meta.stringToEnum(std.meta.Tag(Type), try attr.dupeValue(allocator)) orelse
                         return error.InvalidType;
                 } else if (mem.eql(u8, attr.name, "interface")) {
                     if (interface != null) return error.DuplicateInterface;
@@ -813,14 +809,14 @@ const Arg = struct {
                 if (arg.enum_name) |name| {
                     if (mem.indexOfScalar(u8, name, '.')) |dot_index| {
                         // Turn a reference like wl_shm.format into common.wl.shm.Format
-                        try writer.writeAll("common.");
                         const us_index = mem.indexOfScalar(u8, name, '_') orelse 0;
-                        try writer.writeAll(name[0..us_index]);
-                        try writer.writeAll(".");
-                        try writer.writeAll(name[us_index + 1 .. dot_index + 1]);
-                        try writer.writeAll(case(.title, name[dot_index + 1 ..]));
+                        try writer.print("common.{s}.{s}{}", .{
+                            name[0..us_index],
+                            name[us_index + 1 .. dot_index + 1],
+                            titleCase(name[dot_index + 1 ..]),
+                        });
                     } else {
-                        try writer.writeAll(case(.title, name));
+                        try writer.print("{}", .{titleCase(name)});
                     }
                 } else if (arg.kind == .int) {
                     try writer.writeAll("i32");
@@ -895,8 +891,7 @@ const Enum = struct {
     }
 
     fn emit(e: Enum, writer: anytype) !void {
-        try writer.writeAll("pub const ");
-        try printIdentifier(writer, case(.title, e.name));
+        try writer.print("pub const {}", .{titleCase(e.name)});
 
         if (e.bitfield) {
             var entries_emitted: u8 = 0;
@@ -904,7 +899,7 @@ const Enum = struct {
             for (e.entries.items) |entry| {
                 const value = entry.intValue();
                 if (value != 0 and std.math.isPowerOfTwo(value)) {
-                    try printIdentifier(writer, entry.name);
+                    try writer.print("{s}", .{entry.name});
                     if (entries_emitted == 0) {
                         // Align the first field to ensure the entire packed
                         // struct matches the alignment of a u32. This allows
@@ -928,10 +923,9 @@ const Enum = struct {
             try writer.writeAll("pub const Enum ");
         }
 
-        try writer.writeAll(" = extern enum(c_int) {");
+        try writer.writeAll(" = enum(c_int) {");
         for (e.entries.items) |entry| {
-            try printIdentifier(writer, entry.name);
-            try writer.print("= {s},", .{entry.value});
+            try writer.print("{s}= {s},", .{ fmtId(entry.name), entry.value });
         }
         // Always generate non-exhaustive enums to ensure forward compatability.
         // Entries have been added to wl_shm.format without bumping the version.
@@ -993,46 +987,55 @@ fn trimPrefix(s: []const u8) []const u8 {
     return s[mem.indexOfScalar(u8, s, '_').? + 1 ..];
 }
 
-var case_buf: [512]u8 = undefined;
-fn case(out_case: enum { title, camel }, snake_case: []const u8) []const u8 {
-    var i: usize = 0;
-    var upper = out_case == .title;
-    for (snake_case) |ch| {
-        if (ch == '_') {
-            upper = true;
-            continue;
+const Case = enum { title, camel };
+
+fn formatCaseImpl(case: Case, comptime trim: bool) type {
+    return struct {
+        pub fn f(
+            bytes: []const u8,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+
+            var upper = case == .title;
+            var str = if (trim) trimPrefix(bytes) else bytes;
+            for (str) |c| {
+                if (c == '_') {
+                    upper = true;
+                    continue;
+                }
+                try writer.writeByte(if (upper) std.ascii.toUpper(c) else c);
+                upper = false;
+            }
         }
-        case_buf[i] = if (upper) std.ascii.toUpper(ch) else ch;
-        i += 1;
-        upper = false;
-    }
-    return case_buf[0..i];
+    };
+}
+
+fn titleCase(bytes: []const u8) std.fmt.Formatter(formatCaseImpl(.title, false).f) {
+    return .{ .data = bytes };
+}
+
+fn titleCaseTrim(bytes: []const u8) std.fmt.Formatter(formatCaseImpl(.title, true).f) {
+    return .{ .data = bytes };
+}
+
+fn camelCase(bytes: []const u8) std.fmt.Formatter(formatCaseImpl(.camel, false).f) {
+    return .{ .data = bytes };
+}
+
+fn camelCaseTrim(bytes: []const u8) std.fmt.Formatter(formatCaseImpl(.camel, true).f) {
+    return .{ .data = bytes };
 }
 
 fn printAbsolute(side: Side, writer: anytype, interface: []const u8) !void {
-    try writer.writeAll(@tagName(side));
-    try writer.writeByte('.');
-    try printIdentifier(writer, prefix(interface) orelse return error.MissingPrefix);
-    try writer.writeByte('.');
-    try printIdentifier(writer, case(.title, trimPrefix(interface)));
-}
-
-fn printIdentifier(writer: anytype, identifier: []const u8) !void {
-    if (isValidIdentifier(identifier))
-        try writer.writeAll(identifier)
-    else
-        try writer.print("@\"{s}\"", .{identifier});
-}
-
-fn isValidIdentifier(identifier: []const u8) bool {
-    // !keyword [A-Za-z_] [A-Za-z0-9_]*
-    if (identifier.len == 0) return false;
-    for (identifier) |ch, i| switch (ch) {
-        'A'...'Z', 'a'...'z', '_' => {},
-        '0'...'9' => if (i == 0) return false,
-        else => return false,
-    };
-    return std.zig.Token.getKeyword(identifier) == null;
+    try writer.print("{s}.{s}.{}", .{
+        @tagName(side),
+        prefix(interface) orelse return error.MissingPrefix,
+        titleCaseTrim(interface),
+    });
 }
 
 test "parsing" {
@@ -1042,118 +1045,118 @@ test "parsing" {
 
     const protocol = try Protocol.parseXML(&arena.allocator, @embedFile("../protocol/wayland.xml"));
 
-    testing.expectEqualSlices(u8, "wayland", protocol.name);
-    testing.expectEqual(@as(usize, 22), protocol.interfaces.items.len);
+    try testing.expectEqualSlices(u8, "wayland", protocol.name);
+    try testing.expectEqual(@as(usize, 22), protocol.interfaces.items.len);
 
     {
         const wl_display = protocol.interfaces.items[0];
-        testing.expectEqualSlices(u8, "wl_display", wl_display.name);
-        testing.expectEqual(@as(u32, 1), wl_display.version);
-        testing.expectEqual(@as(usize, 2), wl_display.requests.items.len);
-        testing.expectEqual(@as(usize, 2), wl_display.events.items.len);
-        testing.expectEqual(@as(usize, 1), wl_display.enums.items.len);
+        try testing.expectEqualSlices(u8, "wl_display", wl_display.name);
+        try testing.expectEqual(@as(u32, 1), wl_display.version);
+        try testing.expectEqual(@as(usize, 2), wl_display.requests.items.len);
+        try testing.expectEqual(@as(usize, 2), wl_display.events.items.len);
+        try testing.expectEqual(@as(usize, 1), wl_display.enums.items.len);
 
         {
             const sync = wl_display.requests.items[0];
-            testing.expectEqualSlices(u8, "sync", sync.name);
-            testing.expectEqual(@as(u32, 1), sync.since);
-            testing.expectEqual(@as(usize, 1), sync.args.items.len);
+            try testing.expectEqualSlices(u8, "sync", sync.name);
+            try testing.expectEqual(@as(u32, 1), sync.since);
+            try testing.expectEqual(@as(usize, 1), sync.args.items.len);
             {
                 const callback = sync.args.items[0];
-                testing.expectEqualSlices(u8, "callback", callback.name);
-                testing.expect(callback.kind == .new_id);
-                testing.expectEqualSlices(u8, "wl_callback", callback.kind.new_id.?);
-                testing.expectEqual(false, callback.allow_null);
-                testing.expectEqual(@as(?[]const u8, null), callback.enum_name);
+                try testing.expectEqualSlices(u8, "callback", callback.name);
+                try testing.expect(callback.kind == .new_id);
+                try testing.expectEqualSlices(u8, "wl_callback", callback.kind.new_id.?);
+                try testing.expectEqual(false, callback.allow_null);
+                try testing.expectEqual(@as(?[]const u8, null), callback.enum_name);
             }
-            testing.expect(sync.kind == .constructor);
+            try testing.expect(sync.kind == .constructor);
         }
 
         {
             const error_event = wl_display.events.items[0];
-            testing.expectEqualSlices(u8, "error", error_event.name);
-            testing.expectEqual(@as(u32, 1), error_event.since);
-            testing.expectEqual(@as(usize, 3), error_event.args.items.len);
+            try testing.expectEqualSlices(u8, "error", error_event.name);
+            try testing.expectEqual(@as(u32, 1), error_event.since);
+            try testing.expectEqual(@as(usize, 3), error_event.args.items.len);
             {
                 const object_id = error_event.args.items[0];
-                testing.expectEqualSlices(u8, "object_id", object_id.name);
-                testing.expectEqual(Arg.Type{ .object = null }, object_id.kind);
-                testing.expectEqual(false, object_id.allow_null);
-                testing.expectEqual(@as(?[]const u8, null), object_id.enum_name);
+                try testing.expectEqualSlices(u8, "object_id", object_id.name);
+                try testing.expectEqual(Arg.Type{ .object = null }, object_id.kind);
+                try testing.expectEqual(false, object_id.allow_null);
+                try testing.expectEqual(@as(?[]const u8, null), object_id.enum_name);
             }
             {
                 const code = error_event.args.items[1];
-                testing.expectEqualSlices(u8, "code", code.name);
-                testing.expectEqual(Arg.Type.uint, code.kind);
-                testing.expectEqual(false, code.allow_null);
-                testing.expectEqual(@as(?[]const u8, null), code.enum_name);
+                try testing.expectEqualSlices(u8, "code", code.name);
+                try testing.expectEqual(Arg.Type.uint, code.kind);
+                try testing.expectEqual(false, code.allow_null);
+                try testing.expectEqual(@as(?[]const u8, null), code.enum_name);
             }
             {
                 const message = error_event.args.items[2];
-                testing.expectEqualSlices(u8, "message", message.name);
-                testing.expectEqual(Arg.Type.string, message.kind);
-                testing.expectEqual(false, message.allow_null);
-                testing.expectEqual(@as(?[]const u8, null), message.enum_name);
+                try testing.expectEqualSlices(u8, "message", message.name);
+                try testing.expectEqual(Arg.Type.string, message.kind);
+                try testing.expectEqual(false, message.allow_null);
+                try testing.expectEqual(@as(?[]const u8, null), message.enum_name);
             }
         }
 
         {
             const error_enum = wl_display.enums.items[0];
-            testing.expectEqualSlices(u8, "error", error_enum.name);
-            testing.expectEqual(@as(u32, 1), error_enum.since);
-            testing.expectEqual(@as(usize, 4), error_enum.entries.items.len);
+            try testing.expectEqualSlices(u8, "error", error_enum.name);
+            try testing.expectEqual(@as(u32, 1), error_enum.since);
+            try testing.expectEqual(@as(usize, 4), error_enum.entries.items.len);
             {
                 const invalid_object = error_enum.entries.items[0];
-                testing.expectEqualSlices(u8, "invalid_object", invalid_object.name);
-                testing.expectEqual(@as(u32, 1), invalid_object.since);
-                testing.expectEqualSlices(u8, "0", invalid_object.value);
+                try testing.expectEqualSlices(u8, "invalid_object", invalid_object.name);
+                try testing.expectEqual(@as(u32, 1), invalid_object.since);
+                try testing.expectEqualSlices(u8, "0", invalid_object.value);
             }
             {
                 const invalid_method = error_enum.entries.items[1];
-                testing.expectEqualSlices(u8, "invalid_method", invalid_method.name);
-                testing.expectEqual(@as(u32, 1), invalid_method.since);
-                testing.expectEqualSlices(u8, "1", invalid_method.value);
+                try testing.expectEqualSlices(u8, "invalid_method", invalid_method.name);
+                try testing.expectEqual(@as(u32, 1), invalid_method.since);
+                try testing.expectEqualSlices(u8, "1", invalid_method.value);
             }
             {
                 const no_memory = error_enum.entries.items[2];
-                testing.expectEqualSlices(u8, "no_memory", no_memory.name);
-                testing.expectEqual(@as(u32, 1), no_memory.since);
-                testing.expectEqualSlices(u8, "2", no_memory.value);
+                try testing.expectEqualSlices(u8, "no_memory", no_memory.name);
+                try testing.expectEqual(@as(u32, 1), no_memory.since);
+                try testing.expectEqualSlices(u8, "2", no_memory.value);
             }
             {
                 const implementation = error_enum.entries.items[3];
-                testing.expectEqualSlices(u8, "implementation", implementation.name);
-                testing.expectEqual(@as(u32, 1), implementation.since);
-                testing.expectEqualSlices(u8, "3", implementation.value);
+                try testing.expectEqualSlices(u8, "implementation", implementation.name);
+                try testing.expectEqual(@as(u32, 1), implementation.since);
+                try testing.expectEqualSlices(u8, "3", implementation.value);
             }
-            testing.expectEqual(false, error_enum.bitfield);
+            try testing.expectEqual(false, error_enum.bitfield);
         }
     }
 
     {
         const wl_data_offer = protocol.interfaces.items[7];
-        testing.expectEqualSlices(u8, "wl_data_offer", wl_data_offer.name);
-        testing.expectEqual(@as(u32, 3), wl_data_offer.version);
-        testing.expectEqual(@as(usize, 5), wl_data_offer.requests.items.len);
-        testing.expectEqual(@as(usize, 3), wl_data_offer.events.items.len);
-        testing.expectEqual(@as(usize, 1), wl_data_offer.enums.items.len);
+        try testing.expectEqualSlices(u8, "wl_data_offer", wl_data_offer.name);
+        try testing.expectEqual(@as(u32, 3), wl_data_offer.version);
+        try testing.expectEqual(@as(usize, 5), wl_data_offer.requests.items.len);
+        try testing.expectEqual(@as(usize, 3), wl_data_offer.events.items.len);
+        try testing.expectEqual(@as(usize, 1), wl_data_offer.enums.items.len);
 
         {
             const accept = wl_data_offer.requests.items[0];
-            testing.expectEqualSlices(u8, "accept", accept.name);
-            testing.expectEqual(@as(u32, 1), accept.since);
-            testing.expectEqual(@as(usize, 2), accept.args.items.len);
+            try testing.expectEqualSlices(u8, "accept", accept.name);
+            try testing.expectEqual(@as(u32, 1), accept.since);
+            try testing.expectEqual(@as(usize, 2), accept.args.items.len);
             {
                 const serial = accept.args.items[0];
-                testing.expectEqualSlices(u8, "serial", serial.name);
-                testing.expectEqual(Arg.Type.uint, serial.kind);
-                testing.expectEqual(false, serial.allow_null);
+                try testing.expectEqualSlices(u8, "serial", serial.name);
+                try testing.expectEqual(Arg.Type.uint, serial.kind);
+                try testing.expectEqual(false, serial.allow_null);
             }
             {
                 const mime_type = accept.args.items[1];
-                testing.expectEqualSlices(u8, "mime_type", mime_type.name);
-                testing.expectEqual(Arg.Type.string, mime_type.kind);
-                testing.expectEqual(true, mime_type.allow_null);
+                try testing.expectEqualSlices(u8, "mime_type", mime_type.name);
+                try testing.expectEqual(Arg.Type.string, mime_type.kind);
+                try testing.expectEqual(true, mime_type.allow_null);
             }
         }
     }

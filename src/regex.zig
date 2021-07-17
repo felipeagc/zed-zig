@@ -49,6 +49,7 @@ pub const Regex = struct {
     }
 
     pub fn addPattern(self: *Regex, id: usize, pattern: []const u8) !void {
+        errdefer std.log.err("failed to add regex pattern: \"{s}\"", .{pattern});
         if (pattern.len == 0) {
             return error.RegexPatternEmpty;
         }
@@ -94,7 +95,7 @@ pub const Regex = struct {
             self.end,
             self.start,
             self.range,
-            @intToEnum(c.OnigRegSetLead, c.ONIG_REGSET_POSITION_LEAD),
+            c.ONIG_REGSET_POSITION_LEAD,
             c.ONIG_OPTION_NONE,
             &match_pos,
         );

@@ -827,7 +827,7 @@ pub fn getCodepointDistance(
         const line = try self.getLine(line_index);
         var iter = (try std.unicode.Utf8View.init(line)).iterator();
         var column_index: usize = 0;
-        while (iter.nextCodepoint()) |codepoint| {
+        while (iter.nextCodepoint()) |_| {
             if (line_index > start_line or
                 (line_index == start_line and column_index > start_column))
             {
@@ -909,6 +909,8 @@ pub fn isHighlightingDone(
     start_line: usize,
     end_line: usize,
 ) callconv(.Inline) bool {
+    _ = start_line;
+
     var actual_end_line: usize = end_line;
     if (actual_end_line >= self.lines.items.len) {
         actual_end_line = self.lines.items.len - 1;

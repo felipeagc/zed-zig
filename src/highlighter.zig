@@ -32,8 +32,6 @@ pub const FaceType = enum {
     punctuation,
     operator,
     function,
-    leading_whitespace,
-    trailing_whitespace,
     max,
 };
 
@@ -66,7 +64,7 @@ pub const ColorScheme = struct {
         };
     }
     
-    pub fn jellybeansTheme(allocator: *Allocator) !ColorScheme {
+    pub fn jellybeansTheme(_: *Allocator) !ColorScheme {
         return comptime try ColorScheme.init(
             [_]FaceDesc{
                 // default:
@@ -99,10 +97,6 @@ pub const ColorScheme = struct {
                 .{ .foreground = "#8fbfdc" },
                 // function:
                 .{ .foreground = "#fad07a" },
-                // leading_whitespace:
-                .{ .foreground = "#403c41" },
-                // trailing_whitespace:
-                .{ .foreground = "#cf6a4c" },
             },
         );
     }

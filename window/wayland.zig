@@ -95,7 +95,7 @@ pub const WaylandWindowSystem = struct {
         var registry = try display.getRegistry();
 
         const xkb_context = c.xkb_context_new(
-            .XKB_CONTEXT_NO_FLAGS,
+            0, // no flags
         ) orelse return error.XkbInitError;
 
         var locale = std.os.getenv("LC_ALL");
@@ -112,12 +112,12 @@ pub const WaylandWindowSystem = struct {
         const xkb_compose_table = c.xkb_compose_table_new_from_locale(
             xkb_context,
             locale_z,
-            .XKB_COMPOSE_COMPILE_NO_FLAGS,
+            0, // no flags
         ) orelse return error.XkbInitError;
 
         const xkb_compose_state = c.xkb_compose_state_new(
             xkb_compose_table,
-            .XKB_COMPOSE_STATE_NO_FLAGS,
+            0, // no flags
         ) orelse return error.XkbInitError;
 
         const event_fds = try std.os.pipe();
@@ -312,7 +312,7 @@ pub const WaylandWindowSystem = struct {
 
                 std.os.close(send.fd);
             },
-            .cancelled => |cancelled| {
+            .cancelled => |_| {
                 data_source.destroy();
             },
             else => {},
@@ -324,14 +324,17 @@ pub const WaylandWindowSystem = struct {
         event: wl.DataOffer.Event,
         window_system: *WaylandWindowSystem,
     ) void {
+        _ = data_offer;
+        _ = window_system;
+
         switch (event) {
-            .offer => |offer| {},
+            .offer => |_| {},
             else => {},
         }
     }
 
     fn dataDeviceListener(
-        data_device: *wl.DataDevice,
+        _: *wl.DataDevice,
         event: wl.DataDevice.Event,
         window_system: *WaylandWindowSystem,
     ) void {
@@ -428,13 +431,13 @@ pub const WaylandWindowSystem = struct {
                     std.log.err("failed to push scroll event: {}", .{err});
                 };
             },
-            .button => |button| {},
+            .button => |_| {},
             else => {},
         }
     }
 
     fn keyboardListener(
-        keyboard: *wl.Keyboard,
+        _: *wl.Keyboard,
         event: wl.Keyboard.Event,
         window_system: *WaylandWindowSystem,
     ) void {
@@ -466,7 +469,7 @@ pub const WaylandWindowSystem = struct {
                                 compose_accepted = (c.xkb_compose_state_feed(
                                     window_system.xkb_compose_state,
                                     keysym,
-                                ) == .XKB_COMPOSE_FEED_ACCEPTED);
+                                ) == c.XKB_COMPOSE_FEED_ACCEPTED);
                             }
                         },
                         .released => {
@@ -484,7 +487,7 @@ pub const WaylandWindowSystem = struct {
                         switch (c.xkb_compose_state_get_status(
                             window_system.xkb_compose_state,
                         )) {
-                            .XKB_COMPOSE_COMPOSED => {
+                            c.XKB_COMPOSE_COMPOSED => {
                                 const byte_count = c.xkb_compose_state_get_utf8(
                                     window_system.xkb_compose_state,
                                     ptr,
@@ -502,7 +505,7 @@ pub const WaylandWindowSystem = struct {
                                     }
                                 }
                             },
-                            .XKB_COMPOSE_NOTHING => {
+                            c.XKB_COMPOSE_NOTHING => {
                                 const codepoint: u32 = c.xkb_state_key_get_utf32(
                                     xkb_state,
                                     key.key + 8,
@@ -511,15 +514,15 @@ pub const WaylandWindowSystem = struct {
                                     window_system.emitCodepointEvent(codepoint);
                                 }
                             },
-                            .XKB_COMPOSE_COMPOSING => {},
-                            .XKB_COMPOSE_CANCELLED => {},
+                            c.XKB_COMPOSE_COMPOSING => {},
+                            c.XKB_COMPOSE_CANCELLED => {},
                             else => {},
                         }
                     }
                 }
             },
             .modifiers => |modifiers| {
-                if (window_system.xkb_keymap) |xkb_keymap| {
+                if (window_system.xkb_keymap) |_| {
                     _ = c.xkb_state_update_mask(
                         window_system.xkb_state,
                         modifiers.mods_depressed,
@@ -556,8 +559,8 @@ pub const WaylandWindowSystem = struct {
                 const xkb_keymap = c.xkb_keymap_new_from_string(
                     window_system.xkb_context,
                     map_shm.ptr,
-                    .XKB_KEYMAP_FORMAT_TEXT_V1,
-                    .XKB_KEYMAP_COMPILE_NO_FLAGS,
+                    c.XKB_KEYMAP_FORMAT_TEXT_V1,
+                    c.XKB_KEYMAP_COMPILE_NO_FLAGS,
                 );
 
                 std.os.close(keymap.fd);
@@ -627,35 +630,35 @@ pub const WaylandWindowSystem = struct {
             if (c.xkb_state_mod_name_is_active(
                 xkb_state,
                 c.XKB_MOD_NAME_CTRL,
-                .XKB_STATE_MODS_EFFECTIVE,
+                c.XKB_STATE_MODS_EFFECTIVE,
             ) == 1) {
                 mods.control = true;
             }
             if (c.xkb_state_mod_name_is_active(
                 xkb_state,
                 c.XKB_MOD_NAME_SHIFT,
-                .XKB_STATE_MODS_EFFECTIVE,
+                c.XKB_STATE_MODS_EFFECTIVE,
             ) == 1) {
                 mods.shift = true;
             }
             if (c.xkb_state_mod_name_is_active(
                 xkb_state,
                 c.XKB_MOD_NAME_ALT,
-                .XKB_STATE_MODS_EFFECTIVE,
+                c.XKB_STATE_MODS_EFFECTIVE,
             ) == 1) {
                 mods.alt = true;
             }
             if (c.xkb_state_mod_name_is_active(
                 xkb_state,
                 c.XKB_MOD_NAME_CAPS,
-                .XKB_STATE_MODS_EFFECTIVE,
+                c.XKB_STATE_MODS_EFFECTIVE,
             ) == 1) {
                 mods.caps_lock = true;
             }
             if (c.xkb_state_mod_name_is_active(
                 xkb_state,
                 c.XKB_MOD_NAME_NUM,
-                .XKB_STATE_MODS_EFFECTIVE,
+                c.XKB_STATE_MODS_EFFECTIVE,
             ) == 1) {
                 mods.num_lock = true;
             }
@@ -736,7 +739,7 @@ pub const WaylandWindowSystem = struct {
         }
     }
 
-    fn pumpEvents(self: *WaylandWindowSystem, block: bool) !void {
+    fn pumpEvents(self: *WaylandWindowSystem) !void {
         _ = try self.display.flush();
 
         var fds = [_]std.os.linux.pollfd{
@@ -783,7 +786,7 @@ pub const WaylandWindowSystem = struct {
 
     fn pollEvents(window_system: *WindowSystem) anyerror!void {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
-        try self.pumpEvents(false);
+        try self.pumpEvents();
     }
 
     // Timeout in nanoseconds
@@ -791,7 +794,7 @@ pub const WaylandWindowSystem = struct {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
 
         while (true) {
-            _ = try self.pumpEvents(true);
+            _ = try self.pumpEvents();
 
             {
                 const lock = self.queue_mutex.acquire();
@@ -849,7 +852,7 @@ pub const WaylandWindowSystem = struct {
         }
     }
 
-    fn glSwapInterval(window_system: *WindowSystem, interval: i32) void {
+    fn glSwapInterval(window_system: *WindowSystem, _: i32) void {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
         _ = c.eglSwapInterval(self.getEGLDisplay(), 1);
     }
@@ -917,7 +920,7 @@ const WaylandWindow = struct {
             egl_context = c.eglCreateContext(
                 window_system.getEGLDisplay(),
                 config,
-                c.EGL_NO_CONTEXT,
+                null,
                 null,
             );
 
@@ -1005,7 +1008,7 @@ const WaylandWindow = struct {
     }
 
     fn xdgToplevelListener(
-        xdg_toplevel: *xdg.Toplevel,
+        _: *xdg.Toplevel,
         event: xdg.Toplevel.Event,
         window: *WaylandWindow,
     ) void {

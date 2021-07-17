@@ -265,7 +265,7 @@ pub fn activate(
         self.options.items,
         {},
         struct {
-            fn cmp(context: void, a: []const u8, b: []const u8) bool {
+            fn cmp(_: void, a: []const u8, b: []const u8) bool {
                 return std.mem.lessThan(u8, a, b);
             }
         }.cmp,
@@ -416,7 +416,6 @@ comptime {
 test "minibuffer" {
     const testing = std.testing;
     const allocator = testing.allocator;
-    const expect = testing.expect;
     const expectEqualStrings = testing.expectEqualStrings;
 
     const minibuffer = try MiniBuffer.init(allocator);

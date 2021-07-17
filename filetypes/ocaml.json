@@ -1,15 +1,15 @@
 {
-	"extensions": [ "c" ],
+	"extensions": [ "ml", "mli" ],
 	"increase_indent_pattern": "^((?!\\/\\/).)*(\\{[^}\"'`]*|\\([^)\"'`]*|\\[[^\\]\"'`]*)$",
 	"decrease_indent_pattern": "^((?!.*?\\/\\*).*\\*\\/)?\\s*[\\)\\}\\]].*$",
 	"indent_next_line_pattern": "^\\s*\\w+\\s*\\(.*\\)\\s*(\\/\\/.*|\\/\\*.*\\*\\/\\s*)?$",
-	"zero_indent_pattern": "^\\s*#",
-	"formatter_command": "clang-format",
+	"formatter_command": "ocamlformat -",
 	"brackets": [
 		{ "open": "\"", "close": "\"" },
 		{ "open": "'", "close": "'" },
 		{ "open": "(", "close": ")" },
 		{ "open": "[", "close": "]" },
+		{ "open": "[|", "close": "|]" },
 		{ "open": "{", "close": "}" }
 	],
 	"highlighters": [
@@ -20,7 +20,7 @@
 				{
 					"type": "pop",
 					"face": "comment",
-					"pattern": "\\*/"
+					"pattern": "\\*\\)"
 				}
 			]
 		},
@@ -69,7 +69,7 @@
 				{
 					"type": "push",
 					"face": "comment",
-					"pattern": "/\\*",
+					"pattern": "\\(\\*",
 					"sub_highlighter": "multiline_comment"
 				},
 				{
@@ -86,40 +86,19 @@
 				},
 				{
 					"face": "keyword",
-					"pattern": "\\b(Alignas|_Alignof|_Noreturn|_Static_assert|_Thread_local|sizeof|static|struct|switch|typedef|union|volatile|while|for|goto|if|inline|register|restrict|return|auto|break|case|const|continue|default|do|else|enum|extern)\\b"
+					"pattern": "\\b(and|as|assert|begin|class|constraint|do|done|downto|else|end|exception|external|for|fun|function|functor|if|in|include|inherit|initializer|lazy|let|match|method|module|mutable|new|nonrec|object|of|open|private|rec|sig|struct|then|to|try|type|val|virtual|when|while|with)\\b(?!')"
 				},
 				{
 					"face": "type",
-					"pattern": "\\b(void|_Bool|bool|_Atomic|_Complex|_Decimal128|_Decimal32|_Decimal64|_Generic|_Imaginary|char|short|int|long|signed|unsigned|float|double|uint8_t|uint16_t|uint32_t|uint64_t|int8_t|int16_t|int32_t|int64_t|size_t|ptrdiff_t|intptr_t|uintptr_t)\\b"
+					"pattern": "\\b(unit|bool|int|int32|int64|nativeint|float|char|bytes|string)\\b"
 				},
-				{
-					"face": "preprocessor",
-					"pattern": "^[\\s]*(#include|#if|#endif|#ifdef|#ifndef|#else|#elif|#pragma|#define|#undef)\\b"
-				},
-				{
-					"face": "constant",
-					"pattern": "\\b((((\\d+\\.\\d*)|(0x[0-9a-fA-F]+|\\d+))f?[uU]?[lL]?[lL]?)|true|false|NULL|__LINE__|__FILE__|__DATE__|__TIME__|__cplusplus|__STDC__|__STDC_VERSION__|__STDC_HOSTED__)\\b"
-				},
-				{
-					"face": "string",
-					"pattern": "(?<=#include)((?:\\s+)\\<.*\\>)"
-				},
-				{
-					"face": "label",
-					"pattern": "\\b(\\w+)(?=:)"
-				},
-				{
-					"face": "type",
-					"pattern": "\\b(\\w+)(?=((\\s+)|((\\s*\\*+)+))\\w+\\s*[\\[\\(;=,])"
-				},
-				{
-					"face": "function",
-					"pattern": "\\b\\w+(?:\\s*)(?=\\()"
-				},
-				{
-					"face": "constant",
-					"pattern": "(?<=\\[)(\\w+)(?=\\])"
-				},
+				{ "face": "constant", "pattern": "\\b(true|false|\\(\\))\\b" },
+				{ "face": "constant", "pattern": "\\b(-?[\\d_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "\\b(0x[a-fA-F\\d_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "\\b(0o[0-7_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "\\b(0b[01_]+)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "(-?\\b[\\d_]+(?:\\.[\\d_]+)?(?:[eE][+-]?[\\d_]+)?)(?!\\.)\\b" },
+				{ "face": "constant", "pattern": "(-?\\b0x[a-fA-F\\d_]+(?:\\.[a-fA-F\\d_]+)?[pP]?(?:[+-]?[\\d_]+)?)(?!\\.)\\b" },
 				{
 					"face": "operator",
 					"pattern": "([\\.\\&\\*\\+\\-\\/\\%\\!\\=\\?\\~\\^\\|])"
@@ -127,10 +106,6 @@
 				{
 					"face": "punctuation",
 					"pattern": "([\\(\\)\\[\\]\\{\\}])"
-				},
-				{
-					"face": "comment",
-					"pattern": "(//.*$)"
 				}
 			]
 		}
