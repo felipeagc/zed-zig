@@ -12,10 +12,10 @@ pub const Binding = union(enum) {
 };
 
 pub const KeyMap = struct {
-    allocator: *Allocator,
+    allocator: Allocator,
     map: std.StringArrayHashMap(*Binding),
 
-    pub fn init(allocator: *Allocator) !KeyMap {
+    pub fn init(allocator: Allocator) !KeyMap {
         return KeyMap{
             .allocator = allocator,
             .map = std.StringArrayHashMap(*Binding).init(allocator),
@@ -82,7 +82,7 @@ pub const KeyMap = struct {
         var seq_builder = std.ArrayList(u8).init(self.allocator);
         defer seq_builder.deinit();
 
-        var split_iter = std.mem.tokenize(sequence, " ");
+        var split_iter = std.mem.tokenize(u8, sequence, " ");
         while (split_iter.next()) |part| {
             const prev_seq_len = seq_builder.items.len;
 
@@ -133,7 +133,7 @@ pub const KeyMap = struct {
     }
 
     pub fn keyToKeySeq(
-        allocator: *Allocator,
+        allocator: Allocator,
         key: win.Key,
         mods: win.KeyMods,
     ) !?[]const u8 {
@@ -207,7 +207,7 @@ pub const KeyMap = struct {
         );
     }
 
-    pub fn codepointToKeySeq(allocator: *Allocator, codepoint: u32) !?[]const u8 {
+    pub fn codepointToKeySeq(allocator: Allocator, codepoint: u32) !?[]const u8 {
         var bytes = [_]u8{0} ** 4;
         const key_name = if (codepoint == ' ') "<space>" else blk: {
             const byte_count = try std.unicode.utf8Encode(@intCast(u21, codepoint), &bytes);

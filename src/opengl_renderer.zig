@@ -20,7 +20,7 @@ pub const OnCharCallback = fn (codepoint: u32) void;
 pub const OnScrollCallback = fn (dx: f64, dy: f64) void;
 
 const Renderer = struct {
-    allocator: *Allocator,
+    allocator: Allocator,
 
     window_system: *win.WindowSystem,
     window: *win.Window,
@@ -333,7 +333,7 @@ pub const Font = struct {
         var path = try getPath(g_renderer.allocator, full_font_name_z);
         defer g_renderer.allocator.destroy(path);
 
-        const file = try std.fs.openFileAbsolute(mem.spanZ(path), .{ .read = true });
+        const file = try std.fs.openFileAbsolute(mem.span(path), .{ .mode = .read_only });
         defer file.close();
 
         const stat = try file.stat();
@@ -372,7 +372,7 @@ pub const Font = struct {
         g_renderer.allocator.destroy(self);
     }
 
-    fn getPath(allocator: *Allocator, font_name: [*:0]const u8) ![*:0]const u8 {
+    fn getPath(allocator: Allocator, font_name: [*:0]const u8) ![*:0]const u8 {
         var pat: *c.FcPattern = c.FcNameParse(font_name) orelse
             return error.FontConfigFailedToParseName;
         defer c.FcPatternDestroy(pat);
@@ -399,7 +399,7 @@ pub const Font = struct {
             0,
             &file,
         ) == c.FcResultMatch) {
-            return try allocator.dupeZ(u8, mem.spanZ(file));
+            return try allocator.dupeZ(u8, mem.span(file));
         }
 
         return error.FontConfigFailedToGetPath;
@@ -472,7 +472,7 @@ const Command = union(CommandTag) {
 };
 
 pub fn init(
-    allocator: *Allocator,
+    allocator: Allocator,
     options: struct {
         on_key_callback: OnKeyCallback,
         on_char_callback: OnCharCallback,
@@ -518,7 +518,7 @@ pub fn init(
             c.GL_FLOAT,
             c.GL_FALSE,
             @sizeOf(Vertex),
-            @intToPtr(*allowzero c_void, @offsetOf(Vertex, "pos")),
+            @intToPtr(*allowzero anyopaque, @offsetOf(Vertex, "pos")),
         );
         c.glEnableVertexAttribArray(0);
 
@@ -528,7 +528,7 @@ pub fn init(
             c.GL_FLOAT,
             c.GL_FALSE,
             @sizeOf(Vertex),
-            @intToPtr(*allowzero c_void, @offsetOf(Vertex, "texcoord")),
+            @intToPtr(*allowzero anyopaque, @offsetOf(Vertex, "texcoord")),
         );
         c.glEnableVertexAttribArray(1);
 
@@ -538,7 +538,7 @@ pub fn init(
             c.GL_UNSIGNED_BYTE,
             c.GL_TRUE,
             @sizeOf(Vertex),
-            @intToPtr(*allowzero c_void, @offsetOf(Vertex, "color")),
+            @intToPtr(*allowzero anyopaque, @offsetOf(Vertex, "color")),
         );
         c.glEnableVertexAttribArray(2);
 
@@ -694,7 +694,7 @@ pub fn endFrame() !void {
                     c.GL_TRIANGLES,
                     @intCast(c_int, draw.index_count),
                     if (@sizeOf(Index) == 2) c.GL_UNSIGNED_SHORT else c.GL_UNSIGNED_INT,
-                    @intToPtr(?*c_void, draw.first_index * @sizeOf(Index)),
+                    @intToPtr(?*anyopaque, draw.first_index * @sizeOf(Index)),
                 );
             },
             .set_scissor => |scissor| {
@@ -734,7 +734,7 @@ pub fn pushEvent(event: win.Event) void {
     g_renderer.window_system.pushEvent(event) catch {};
 }
 
-pub fn getClipboardString(allocator: *Allocator) callconv(.Inline) !?[]const u8 {
+pub fn getClipboardString(allocator: Allocator) callconv(.Inline) !?[]const u8 {
     return g_renderer.window_system.getClipboardContentAlloc(allocator);
 }
 

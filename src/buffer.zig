@@ -11,7 +11,7 @@ const Line = struct {
     content: ArrayList(u8),
     tokens: ArrayList(Token),
 
-    fn init(allocator: *Allocator, content: []const u8) !Line {
+    fn init(allocator: Allocator, content: []const u8) !Line {
         var line = Line{
             .content = ArrayList(u8).init(allocator),
             .tokens = ArrayList(Token).init(allocator),
@@ -67,7 +67,7 @@ pub const BufferOptions = struct {
 
 pub const Buffer = @This();
 
-allocator: *Allocator,
+allocator: Allocator,
 lines: ArrayList(Line),
 undo_stack: ArrayList(TextOp),
 redo_stack: ArrayList(TextOp),
@@ -81,7 +81,7 @@ current_generation: usize = 0,
 readonly: bool,
 builtin: bool,
 
-pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
+pub fn init(allocator: Allocator, options: BufferOptions) !*Buffer {
     var self = try allocator.create(@This());
     self.* = .{
         .allocator = allocator,
@@ -106,7 +106,7 @@ pub fn init(allocator: *Allocator, options: BufferOptions) !*Buffer {
 }
 
 pub fn initWithContent(
-    allocator: *Allocator,
+    allocator: Allocator,
     content: []const u8,
     options: BufferOptions,
 ) !*Buffer {
@@ -115,7 +115,7 @@ pub fn initWithContent(
 
     self.lines.shrinkRetainingCapacity(0);
 
-    var iter = mem.split(content, "\n");
+    var iter = mem.split(u8, content, "\n");
     while (iter.next()) |line_content| {
         try self.lines.append(try Line.init(self.allocator, line_content));
     }
@@ -124,7 +124,7 @@ pub fn initWithContent(
 }
 
 pub fn initFromFile(
-    allocator: *Allocator,
+    allocator: Allocator,
     options: BufferOptions,
 ) !*Buffer {
     if (options.path == null) return error.BufferInitMissingPath;
@@ -301,7 +301,7 @@ fn insertInternal(
     var inserted_lines = ArrayList(Line).init(self.allocator);
     defer inserted_lines.deinit();
 
-    var iter = mem.split(text, "\n");
+    var iter = mem.split(u8, text, "\n");
     while (iter.next()) |line_content| {
         try inserted_lines.append(try Line.init(self.allocator, line_content));
     }
@@ -502,9 +502,9 @@ pub fn clearContentForce(self: *@This()) !void {
     );
 }
 
-pub fn getEntireContent(self: *@This(), allocator: *Allocator) ![]const u8 {
+pub fn getEntireContent(self: *@This(), allocator: Allocator) ![]const u8 {
     var content = ArrayList(u8).init(allocator);
-    try content.ensureCapacity(self.lines.items.len * 40);
+    try content.ensureTotalCapacity(self.lines.items.len * 40);
 
     for (self.lines.items) |line| {
         try content.appendSlice(line.content.items);
@@ -516,7 +516,7 @@ pub fn getEntireContent(self: *@This(), allocator: *Allocator) ![]const u8 {
 
 pub fn getContent(
     self: *@This(),
-    allocator: *Allocator,
+    allocator: Allocator,
     line_index: usize,
     column_index: usize,
     codepoint_length: usize,
@@ -546,7 +546,7 @@ const GetContentResult = struct {
 
 fn getContentInternal(
     self: *@This(),
-    maybe_allocator: ?*Allocator,
+    maybe_allocator: ?Allocator,
     line_index: usize,
     column_index: usize,
     codepoint_length: usize,

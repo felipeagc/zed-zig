@@ -3,14 +3,13 @@ const std = @import("std");
 /// Parses arguments for the given specification and our current process.
 /// - `Spec` is the configuration of the arguments.
 /// - `allocator` is the allocator that is used to allocate all required memory
-pub fn parseForCurrentProcess(comptime Spec: type, allocator: *std.mem.Allocator) !ParseArgsResult(Spec) {
+pub fn parseForCurrentProcess(comptime Spec: type, allocator: std.mem.Allocator) !ParseArgsResult(Spec) {
     var args = std.process.args();
 
-    const executable_name = try (args.next(allocator) orelse {
+    const executable_name = args.next() orelse {
         try std.io.getStdErr().writer().writeAll("Failed to get executable name from the argument list!\n");
         return error.NoExecutableName;
-    });
-    errdefer allocator.free(executable_name);
+    };
 
     var result = try parse(Spec, &args, allocator);
 
@@ -25,7 +24,7 @@ pub fn parseForCurrentProcess(comptime Spec: type, allocator: *std.mem.Allocator
 /// - `allocator` is the allocator that is used to allocate all required memory
 ///
 /// Note that `.executable_name` in the result will not be set!
-pub fn parse(comptime Spec: type, args: *std.process.ArgIterator, allocator: *std.mem.Allocator) !ParseArgsResult(Spec) {
+pub fn parse(comptime Spec: type, args: *std.process.ArgIterator, allocator: std.mem.Allocator) !ParseArgsResult(Spec) {
     var result = ParseArgsResult(Spec){
         .arena = std.heap.ArenaAllocator.init(allocator),
         .options = Spec{},
@@ -37,9 +36,7 @@ pub fn parse(comptime Spec: type, args: *std.process.ArgIterator, allocator: *st
     var arglist = std.ArrayList([]const u8).init(allocator);
     errdefer arglist.deinit();
 
-    while (args.next(&result.arena.allocator)) |item_or_error| {
-        const item = try item_or_error;
-
+    while (args.next()) |item| {
         if (std.mem.startsWith(u8, item, "--")) {
             if (std.mem.eql(u8, item, "--")) {
                 // double hyphen is considered 'everything from here now is positional'
@@ -117,8 +114,7 @@ pub fn parse(comptime Spec: type, args: *std.process.ArgIterator, allocator: *st
 
     // This will consume the rest of the arguments as positional ones.
     // Only executes when the above loop is broken.
-    while (args.next(&result.arena.allocator)) |item_or_error| {
-        const item = try item_or_error;
+    while (args.next()) |item| {
         try arglist.append(item);
     }
 
@@ -144,10 +140,6 @@ pub fn ParseArgsResult(comptime Spec: type) type {
 
         pub fn deinit(self: Self) void {
             self.arena.child_allocator.free(self.positionals);
-
-            if (self.executable_name) |n|
-                self.arena.child_allocator.free(n);
-
             self.arena.deinit();
         }
     };

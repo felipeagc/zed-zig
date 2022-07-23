@@ -20,9 +20,9 @@ const GlobalAllocator = struct {
         }
     }
 
-    fn getAllocator(self: *@This()) *std.mem.Allocator {
+    fn allocator(self: *@This()) std.mem.Allocator {
         if (builtin.mode == .Debug) {
-            return &self.internal.allocator;
+            return self.internal.allocator();
         } else {
             return std.heap.c_allocator;
         }
@@ -33,7 +33,7 @@ pub fn main() anyerror!void {
     var global_allocator = GlobalAllocator{};
     defer global_allocator.deinit();
 
-    const allocator = global_allocator.getAllocator();
+    const allocator = global_allocator.allocator();
 
     try editor.init(allocator);
     defer editor.deinit();

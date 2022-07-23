@@ -4,7 +4,10 @@ const Allocator = std.mem.Allocator;
 
 const WaylandWindowSystem = @import("wayland.zig").WaylandWindowSystem;
 
-pub usingnamespace @import("key.zig");
+pub const key = @import("key.zig");
+pub const Key = key.Key;
+pub const KeyMods = key.KeyMods;
+pub const KeyState = key.KeyState;
 
 pub const WindowOptions = struct {
     opengl: bool,
@@ -44,7 +47,7 @@ pub const WindowSystem = struct {
     push_event_fn: fn (self: *WindowSystem, event: Event) anyerror!void,
     get_clipboard_content_alloc_fn: fn (
         self: *WindowSystem,
-        allocator: *Allocator,
+        allocator: Allocator,
     ) anyerror!?[]const u8,
     set_clipboard_content_fn: fn (
         self: *WindowSystem,
@@ -59,7 +62,7 @@ pub const WindowSystem = struct {
         options: WindowOptions,
     ) anyerror!*Window,
 
-    pub fn init(allocator: *Allocator) anyerror!*WindowSystem {
+    pub fn init(allocator: Allocator) anyerror!*WindowSystem {
         if (builtin.os.tag == .linux) {
             if (std.os.getenv("WAYLAND_DISPLAY") != null) {
                 return WaylandWindowSystem.init(allocator);
@@ -111,7 +114,7 @@ pub const WindowSystem = struct {
 
     pub fn getClipboardContentAlloc(
         self: *WindowSystem,
-        allocator: *Allocator,
+        allocator: Allocator,
     ) !?[]const u8 {
         return self.get_clipboard_content_alloc_fn(self, allocator);
     }

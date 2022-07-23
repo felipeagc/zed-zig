@@ -80,7 +80,7 @@ const Position = struct {
 pub const BufferPanel = @This();
 
 panel: editor.Panel,
-allocator: *Allocator,
+allocator: Allocator,
 buffer: *Buffer,
 mode: Mode = .normal,
 cursor: Position = .{},
@@ -91,7 +91,7 @@ scroll_to_cursor: bool = false,
 search_string: ?[]const u8 = null,
 search_regex: ?Regex = null,
 
-pub fn init(allocator: *Allocator, buffer: *Buffer) !*editor.Panel {
+pub fn init(allocator: Allocator, buffer: *Buffer) !*editor.Panel {
     var self = try allocator.create(BufferPanel);
     self.* = @This(){
         .panel = editor.Panel.init(&VT),
@@ -132,7 +132,7 @@ fn fixupCursor(self: *BufferPanel) !void {
     self.scrollToCursor();
 }
 
-fn getStatusLine(panel: *editor.Panel, allocator: *Allocator) anyerror![]const u8 {
+fn getStatusLine(panel: *editor.Panel, allocator: Allocator) anyerror![]const u8 {
     var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
     const cursor_pos = try self.getFixedCursorPos();
@@ -579,7 +579,7 @@ fn onScroll(panel: *editor.Panel, dx: f64, dy: f64) anyerror!void {
 
     var self = @fieldParentPtr(BufferPanel, "panel", panel);
 
-    if (std.math.absFloat(dy) > 0) {
+    if (@fabs(dy) > 0) {
         var new_target = self.scroll_y.to - 5 * dy;
         const buffer_height = @intToFloat(f64, self.buffer.getLineCount());
 
@@ -2226,7 +2226,7 @@ fn commandEditFile(panel: *editor.Panel, args: [][]const u8) anyerror!void {
     }
 }
 
-fn registerVT(allocator: *Allocator) anyerror!void {
+fn registerVT(allocator: Allocator) anyerror!void {
     command_registry = CommandRegistry.init(allocator);
     errdefer command_registry.deinit();
 
@@ -2335,7 +2335,7 @@ fn registerVT(allocator: *Allocator) anyerror!void {
         fn callback(panel: *editor.Panel, _: [][]const u8) anyerror!void {
             var arena = std.heap.ArenaAllocator.init(editor.getAllocator());
             defer arena.deinit();
-            const arena_allocator = &arena.allocator;
+            const arena_allocator = arena.allocator();
 
             var options = std.ArrayList([]const u8).init(arena_allocator);
             defer options.deinit();
@@ -2368,7 +2368,7 @@ fn registerVT(allocator: *Allocator) anyerror!void {
         fn callback(panel: *editor.Panel, _: [][]const u8) anyerror!void {
             var arena = std.heap.ArenaAllocator.init(editor.getAllocator());
             defer arena.deinit();
-            const arena_allocator = &arena.allocator;
+            const arena_allocator = arena.allocator();
 
             var options = std.ArrayList([]const u8).init(arena_allocator);
             defer options.deinit();

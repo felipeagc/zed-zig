@@ -20,7 +20,7 @@ pub fn deinitLibrary() void {
 }
 
 pub const Regex = struct {
-    allocator: *Allocator,
+    allocator: Allocator,
     regset: *c.OnigRegSet,
     pattern_ids: ArrayList(usize),
 
@@ -30,7 +30,7 @@ pub const Regex = struct {
     start: [*c]const u8 = null,
     range: [*c]const u8 = null,
 
-    pub fn init(allocator: *Allocator) !Regex {
+    pub fn init(allocator: Allocator) !Regex {
         var regset: ?*c.OnigRegSet = null;
         if (c.onig_regset_new(&regset, 0, null) != c.ONIG_NORMAL or regset == null) {
             return error.RegexInitError;

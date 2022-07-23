@@ -51,7 +51,7 @@ pub const TaskResp = union(enum) {
 };
 
 const Editor = struct {
-    allocator: *Allocator,
+    allocator: Allocator,
     options: EditorOptions,
 
     panel_vts: std.ArrayList(*const PanelVT),
@@ -84,7 +84,7 @@ const Editor = struct {
 pub const PanelVT = struct {
     name: []const u8,
 
-    get_status_line: fn (self: *Panel, allocator: *Allocator) anyerror![]const u8,
+    get_status_line: fn (self: *Panel, allocator: Allocator) anyerror![]const u8,
     get_key_map: fn (self: *Panel) *KeyMap,
     draw: fn (self: *Panel, rect: renderer.Rect) anyerror!void,
     deinit: fn (self: *Panel) void,
@@ -93,7 +93,7 @@ pub const PanelVT = struct {
     on_char: ?fn (self: *Panel, codepoint: u32) anyerror!bool = null,
     on_scroll: ?fn (self: *Panel, dx: f64, dy: f64) anyerror!void = null,
 
-    register_vt: ?fn (allocator: *Allocator) anyerror!void = null,
+    register_vt: ?fn (allocator: Allocator) anyerror!void = null,
     unregister_vt: ?fn () void = null,
 
     command_registry: ?*CommandRegistry = null,
@@ -139,7 +139,7 @@ pub const Panel = struct {
 pub const CommandRegistry = struct {
     commands: std.StringArrayHashMap(Command),
 
-    pub fn init(allocator: *Allocator) CommandRegistry {
+    pub fn init(allocator: Allocator) CommandRegistry {
         return CommandRegistry{
             .commands = std.StringArrayHashMap(Command).init(allocator),
         };
@@ -281,7 +281,7 @@ fn executeCommand(panel: *Panel, args: [][]const u8) anyerror!void {
     var parts = std.ArrayList([]const u8).init(g_editor.allocator);
     defer parts.deinit();
 
-    var iter = std.mem.split(command_string, " ");
+    var iter = std.mem.split(u8, command_string, " ");
     while (iter.next()) |part| {
         try parts.append(part);
     }
@@ -435,7 +435,7 @@ fn buildProject(panel: *Panel, args: [][]const u8) anyerror!void {
     });
 }
 
-pub fn init(allocator: *Allocator) !void {
+pub fn init(allocator: Allocator) !void {
     try renderer.init(allocator, .{
         .on_key_callback = onKey,
         .on_char_callback = onChar,
@@ -690,7 +690,7 @@ pub fn deinit() void {
     renderer.deinit();
 }
 
-pub fn getAllocator() *Allocator {
+pub fn getAllocator() Allocator {
     return g_editor.allocator;
 }
 
@@ -828,7 +828,7 @@ pub fn draw() !void {
         const status_padding: i32 = @intCast(i32, g_editor.options.status_line_padding);
         const status_line_height: i32 = (status_padding * 2) + char_height;
 
-        const panel_height = ph - status_line_height - minibuffer_height;
+        const panel_height = std.math.max(ph - status_line_height - minibuffer_height, 0);
 
         // Draw panel
         {
@@ -915,7 +915,7 @@ pub fn draw() !void {
 }
 
 const DirIterator = struct {
-    allocator: *Allocator,
+    allocator: Allocator,
     stack: std.ArrayList(std.fs.Dir),
     current_iterator: ?std.fs.Dir.Iterator = null,
 
@@ -924,7 +924,7 @@ const DirIterator = struct {
         kind: std.fs.File.Kind,
     };
 
-    fn init(allocator: *Allocator, base_dir: std.fs.Dir) !DirIterator {
+    fn init(allocator: Allocator, base_dir: std.fs.Dir) !DirIterator {
         var stack = std.ArrayList(std.fs.Dir).init(allocator);
         try stack.append(base_dir);
         return DirIterator{

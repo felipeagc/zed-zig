@@ -16,10 +16,20 @@ const c = @cImport({
     @cInclude("xkbcommon/xkbcommon-compose.h");
 });
 
-usingnamespace @import("common.zig");
+const common = @import("common.zig");
+const keys = @import("key.zig");
+
+const Event = common.Event;
+const WindowSystem = common.WindowSystem;
+const WindowOptions = common.WindowOptions;
+const Window = common.Window;
+const Key = keys.Key;
+const KeyMods = keys.KeyMods;
+const KeyState = keys.KeyState;
+const xkbKeysymToKey = keys.xkbKeysymToKey;
 
 pub const WaylandWindowSystem = struct {
-    allocator: *Allocator,
+    allocator: Allocator,
     display: *wl.Display,
     registry: *wl.Registry,
     egl_display: c.EGLDisplay = null,
@@ -88,7 +98,7 @@ pub const WaylandWindowSystem = struct {
         }
     };
 
-    pub fn init(allocator: *Allocator) !*WindowSystem {
+    pub fn init(allocator: Allocator) !*WindowSystem {
         var self = try allocator.create(WaylandWindowSystem);
 
         var display = try wl.Display.connect(null);
@@ -149,7 +159,7 @@ pub const WaylandWindowSystem = struct {
         };
 
         registry.setListener(*WaylandWindowSystem, registryListener, self);
-        _ = try display.roundtrip();
+        _ = display.roundtrip();
 
         self.cursor_theme = try wl.CursorTheme.load(null, 24, self.shm.?);
         self.cursor_left_ptr = try Cursor.init(self, "left_ptr");
@@ -200,7 +210,7 @@ pub const WaylandWindowSystem = struct {
             return egl_display;
         } else {
             self.egl_display = c.eglGetDisplay(
-                @ptrCast(*c.struct__XDisplay, self.display),
+                @ptrCast(*anyopaque, self.display),
             );
             _ = c.eglInitialize(self.egl_display, null, null);
             return self.egl_display;
@@ -358,7 +368,7 @@ pub const WaylandWindowSystem = struct {
                 data_offer.receive("text/plain;charset=utf-8", pipe_fds[1]);
                 std.os.close(pipe_fds[1]);
 
-                _ = window_system.display.roundtrip() catch {};
+                _ = window_system.display.roundtrip();
 
                 window_system.clipboard_content.shrinkRetainingCapacity(0);
 
@@ -550,8 +560,8 @@ pub const WaylandWindowSystem = struct {
                 const map_shm = std.os.mmap(
                     null,
                     keymap.size,
-                    std.os.PROT_READ,
-                    std.os.MAP_PRIVATE,
+                    std.os.PROT.READ,
+                    std.os.MAP.PRIVATE,
                     keymap.fd,
                     0,
                 ) catch unreachable;
@@ -584,8 +594,8 @@ pub const WaylandWindowSystem = struct {
     fn pushEvent(window_system: *WindowSystem, event: Event) anyerror!void {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
 
-        const lock = self.queue_mutex.acquire();
-        defer lock.release();
+        self.queue_mutex.lock();
+        defer self.queue_mutex.unlock();
 
         _ = try std.os.write(self.event_write_fd, &[_]u8{0});
 
@@ -601,8 +611,8 @@ pub const WaylandWindowSystem = struct {
     fn nextEvent(window_system: *WindowSystem) ?Event {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
 
-        const lock = self.queue_mutex.acquire();
-        defer lock.release();
+        self.queue_mutex.lock();
+        defer self.queue_mutex.unlock();
 
         if (self.event_queue_head != self.event_queue_tail) {
             const event = self.event_queue[self.event_queue_tail];
@@ -740,22 +750,22 @@ pub const WaylandWindowSystem = struct {
     }
 
     fn pumpEvents(self: *WaylandWindowSystem) !void {
-        _ = try self.display.flush();
+        _ = self.display.flush();
 
         var fds = [_]std.os.linux.pollfd{
             .{
                 .fd = self.display.getFd(),
-                .events = std.os.linux.POLLIN | std.os.linux.POLLPRI,
+                .events = std.os.linux.POLL.IN | std.os.linux.POLL.PRI,
                 .revents = 0,
             },
             .{
                 .fd = self.event_read_fd,
-                .events = std.os.linux.POLLIN | std.os.linux.POLLPRI,
+                .events = std.os.linux.POLL.IN | std.os.linux.POLL.PRI,
                 .revents = 0,
             },
         };
 
-        const timeout: i32 = if (self.repeat_timer) |repeat_timer| blk: {
+        const timeout: i32 = if (self.repeat_timer) |*repeat_timer| blk: {
             const initial_delay = self.repeat_delay;
             const rate_delay = @divTrunc(1000, self.repeat_rate);
 
@@ -769,16 +779,16 @@ pub const WaylandWindowSystem = struct {
         _ = try std.os.poll(&fds, timeout);
 
         if (fds[1].revents != 0) {
-            const lock = self.queue_mutex.acquire();
-            defer lock.release();
+            self.queue_mutex.lock();
+            defer self.queue_mutex.unlock();
             var dummy_buf = [1]u8{0};
             _ = std.os.read(self.event_read_fd, &dummy_buf) catch 0;
         }
 
         if (fds[0].revents != 0) {
-            _ = try self.display.dispatch();
+            _ = self.display.dispatch();
         } else {
-            _ = try self.display.dispatchPending();
+            _ = self.display.dispatchPending();
         }
 
         try self.handleKeyRepeat();
@@ -797,8 +807,8 @@ pub const WaylandWindowSystem = struct {
             _ = try self.pumpEvents();
 
             {
-                const lock = self.queue_mutex.acquire();
-                defer lock.release();
+                self.queue_mutex.lock();
+                defer self.queue_mutex.unlock();
 
                 // Check if there's new events
                 if (self.event_queue_head != self.event_queue_tail) {
@@ -810,7 +820,7 @@ pub const WaylandWindowSystem = struct {
 
     fn getClipboardContentAlloc(
         window_system: *WindowSystem,
-        allocator: *Allocator,
+        allocator: Allocator,
     ) anyerror!?[]const u8 {
         var self = @fieldParentPtr(WaylandWindowSystem, "window_system", window_system);
         if (self.clipboard_content.items.len > 0) {
@@ -870,8 +880,8 @@ const WaylandWindow = struct {
     width: i32,
     height: i32,
 
-    egl_context: ?*c_void,
-    egl_surface: ?*c_void,
+    egl_context: ?*anyopaque,
+    egl_surface: ?*anyopaque,
     egl_window: ?*wl.EglWindow,
 
     fn init(
@@ -896,8 +906,8 @@ const WaylandWindow = struct {
         const toplevel_decoration = try window_system.decoration_manager.?
             .getToplevelDecoration(xdg_toplevel);
 
-        var egl_context: ?*c_void = null;
-        var egl_surface: ?*c_void = null;
+        var egl_context: ?*anyopaque = null;
+        var egl_surface: ?*anyopaque = null;
         var egl_window: ?*wl.EglWindow = null;
 
         if (options.opengl) {
@@ -968,7 +978,7 @@ const WaylandWindow = struct {
         xdg_toplevel.setListener(*WaylandWindow, xdgToplevelListener, self);
 
         self.surface.commit();
-        _ = try window_system.display.roundtrip();
+        _ = window_system.display.roundtrip();
 
         return &self.window;
     }
@@ -1014,7 +1024,7 @@ const WaylandWindow = struct {
     ) void {
         switch (event) {
             .configure => |configure| {
-                if (configure.width > 0 and configure.height > 0) {
+                if (configure.width >= 0 and configure.height >= 0) {
                     window.width = configure.width;
                     window.height = configure.height;
                     if (window.egl_window) |egl_window| {

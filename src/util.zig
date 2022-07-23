@@ -21,7 +21,7 @@ pub fn Animation(comptime T: type) type {
                 renderer.requestRedraw();
             }
 
-            if (std.math.absFloat(self.value - self.to) > self.epsilon) {
+            if (@fabs(self.value - self.to) > self.epsilon) {
                 self.value = lerp(self.value, self.to, delta * self.rate);
             } else {
                 self.value = self.to;
@@ -30,7 +30,7 @@ pub fn Animation(comptime T: type) type {
     };
 }
 
-pub fn normalizePath(allocator: *Allocator, path: []const u8) ![]const u8 {
+pub fn normalizePath(allocator: Allocator, path: []const u8) ![]const u8 {
     var actual_path = path;
     defer if (actual_path.ptr != path.ptr) {
         allocator.free(actual_path);
@@ -66,11 +66,11 @@ pub const Walker = struct {
         basename: []const u8,
 
         path: []const u8,
-        kind: std.fs.Dir.Entry.Kind,
+        kind: std.fs.IterableDir.Entry.Kind,
     };
 
     const StackItem = struct {
-        dir_it: std.fs.Dir.Iterator,
+        dir_it: std.fs.IterableDir.Iterator,
         dirname_len: usize,
     };
 
@@ -78,10 +78,10 @@ pub const Walker = struct {
     /// Must call `Walker.deinit` when done.
     /// `dir_path` must not end in a path separator.
     /// The order of returned file system entries is undefined.
-    pub fn init(allocator: *Allocator, dir_path: []const u8, ignore_regex: ?Regex) !Walker {
+    pub fn init(allocator: Allocator, dir_path: []const u8, ignore_regex: ?Regex) !Walker {
         std.debug.assert(!mem.endsWith(u8, dir_path, std.fs.path.sep_str));
 
-        var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
+        var dir = try std.fs.cwd().openIterableDir(dir_path, .{});
         errdefer dir.close();
 
         var name_buffer = std.ArrayList(u8).init(allocator);
@@ -125,7 +125,7 @@ pub const Walker = struct {
                 try self.name_buffer.appendSlice(base.name);
 
                 if (base.kind == .Directory) {
-                    var new_dir = top.dir_it.dir.openDir(base.name, .{ .iterate = true }) catch |err| switch (err) {
+                    var new_dir = top.dir_it.dir.openIterableDir(base.name, .{}) catch |err| switch (err) {
                         error.NameTooLong => unreachable, // no path sep in base.name
                         else => |e| return e,
                     };
@@ -190,8 +190,8 @@ pub fn Channel(comptime T: type, comptime N: usize) type {
         }
 
         pub fn send(self: *Self, item: T) !void {
-            const lock = self.mutex.acquire();
-            defer lock.release();
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
             try self.queuePush(item);
 
@@ -200,17 +200,17 @@ pub fn Channel(comptime T: type, comptime N: usize) type {
         }
 
         pub fn receiveOrNull(self: *Self) ?T {
-            const lock = self.mutex.acquire();
+            self.mutex.lock();
 
             const item = self.queuePop();
 
             self.cond.signal();
-            lock.release();
+            self.mutex.unlock();
             return item;
         }
 
         pub fn receive(self: *Self) T {
-            const lock = self.mutex.acquire();
+            self.mutex.lock();
 
             while (self.queue_head == self.queue_tail) {
                 self.cond.wait(&self.mutex);
@@ -219,7 +219,7 @@ pub fn Channel(comptime T: type, comptime N: usize) type {
             const item = self.queuePop().?;
 
             self.cond.signal();
-            lock.release();
+            self.mutex.unlock();
 
             return item;
         }
@@ -227,7 +227,7 @@ pub fn Channel(comptime T: type, comptime N: usize) type {
 }
 
 pub fn runCommandAlloc(
-    allocator: *Allocator,
+    allocator: Allocator,
     options: struct {
         command: []const u8,
         stdin_text: ?[]const u8,
@@ -242,7 +242,7 @@ pub fn runCommandAlloc(
         try args.append("/usr/bin/env");
     }
 
-    var iter = mem.split(options.command, " ");
+    var iter = mem.split(u8, options.command, " ");
     while (iter.next()) |part| {
         try args.append(part);
     }
@@ -251,8 +251,7 @@ pub fn runCommandAlloc(
         return error.InvalidRunCommand;
     }
 
-    var proc = try std.ChildProcess.init(args.items, allocator);
-    defer proc.deinit();
+    var proc = std.ChildProcess.init(args.items, allocator);
 
     proc.stdin_behavior = if (options.stdin_text == null) .Ignore else .Pipe;
     proc.stdout_behavior = if (options.stdout_text == null) .Ignore else .Pipe;

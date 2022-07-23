@@ -7,7 +7,7 @@ const Allocator = mem.Allocator;
 
 pub const MiniBuffer = @This();
 
-allocator: *Allocator,
+allocator: Allocator,
 text: ArrayList(u8),
 prompt: ?[]const u8 = null,
 callbacks: Callbacks = .{},
@@ -24,7 +24,7 @@ pub const Callbacks = struct {
     on_cancel: ?editor.Command = null,
 };
 
-pub fn init(allocator: *Allocator) !*MiniBuffer {
+pub fn init(allocator: Allocator) !*MiniBuffer {
     const self = try allocator.create(MiniBuffer);
 
     self.* = MiniBuffer{
@@ -123,7 +123,7 @@ pub fn resetContent(self: *MiniBuffer) void {
     self.cursor = 0;
 }
 
-pub fn getContent(self: *MiniBuffer, allocator: *Allocator) ![]const u8 {
+pub fn getContent(self: *MiniBuffer, allocator: Allocator) ![]const u8 {
     return try allocator.dupe(u8, self.text.items);
 }
 

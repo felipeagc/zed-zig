@@ -15,9 +15,7 @@ pub const Proxy = opaque {
     }
 
     extern fn wl_proxy_destroy(proxy: *Proxy) void;
-    pub fn destroy(proxy: *Proxy) void {
-        wl_proxy_destroy(proxy);
-    }
+    pub const destroy = wl_proxy_destroy;
 
     extern fn wl_proxy_marshal_array(proxy: *Proxy, opcode: u32, args: ?[*]Argument) void;
     pub const marshal = wl_proxy_marshal_array;
@@ -57,7 +55,7 @@ pub const Proxy = opaque {
     }
 
     const DispatcherFn = fn (
-        implementation: ?*const c_void,
+        implementation: ?*const anyopaque,
         proxy: *Proxy,
         opcode: u32,
         message: *const Message,
@@ -66,14 +64,14 @@ pub const Proxy = opaque {
     extern fn wl_proxy_add_dispatcher(
         proxy: *Proxy,
         dispatcher: DispatcherFn,
-        implementation: ?*const c_void,
-        data: ?*c_void,
+        implementation: ?*const anyopaque,
+        data: ?*anyopaque,
     ) c_int;
     pub fn addDispatcher(
         proxy: *Proxy,
         dispatcher: DispatcherFn,
-        implementation: ?*const c_void,
-        data: ?*c_void,
+        implementation: ?*const anyopaque,
+        data: ?*anyopaque,
     ) void {
         const ret = wl_proxy_add_dispatcher(proxy, dispatcher, implementation, data);
         // Since there is no way to remove listeners, adding a listener to
@@ -82,27 +80,22 @@ pub const Proxy = opaque {
         assert(ret != -1); // If this fails, a listener was already added
     }
 
-    extern fn wl_proxy_get_user_data(proxy: *Proxy) ?*c_void;
-    pub fn getUserData(proxy: *Proxy) ?*c_void {
-        return wl_proxy_get_user_data(proxy);
-    }
+    extern fn wl_proxy_get_user_data(proxy: *Proxy) ?*anyopaque;
+    pub const getUserData = wl_proxy_get_user_data;
 
     extern fn wl_proxy_get_version(proxy: *Proxy) u32;
-    pub fn getVersion(proxy: *Proxy) u32 {
-        return wl_proxy_get_version(proxy);
-    }
+    pub const getVersion = wl_proxy_get_version;
 
     extern fn wl_proxy_get_id(proxy: *Proxy) u32;
-    pub fn getId(proxy: *Proxy) u32 {
-        return wl_proxy_get_id(proxy);
-    }
+    pub const getId = wl_proxy_get_id;
+
+    extern fn wl_proxy_set_queue(proxy: *Proxy, queue: *EventQueue) void;
+    pub const setQueue = wl_proxy_set_queue;
 };
 
 pub const EventQueue = opaque {
     extern fn wl_event_queue_destroy(queue: *EventQueue) void;
-    pub fn destroy(event_queue: *EventQueue) void {
-        wl_event_queue_destroy(event_queue);
-    }
+    pub const destroy = wl_event_queue_destroy;
 };
 
 pub const EglWindow = opaque {

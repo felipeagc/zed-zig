@@ -21,7 +21,7 @@ pub const Interface = extern struct {
 pub const Array = extern struct {
     size: usize,
     alloc: usize,
-    data: ?*c_void,
+    data: ?*anyopaque,
 
     /// Does not clone memory
     pub fn fromArrayList(comptime T: type, list: std.ArrayList(T)) Array {
@@ -33,8 +33,10 @@ pub const Array = extern struct {
     }
 
     pub fn slice(array: Array, comptime T: type) []T {
-        const ptr = @intToPtr([*]T, @ptrToInt(array.data orelse return &[0]T{}));
-        return ptr[0 .. array.size / @sizeOf(T)];
+        const data = array.data orelse return &[0]T{};
+        // The wire protocol/libwayland only guarantee 32-bit word alignment.
+        const ptr = @ptrCast([*]T, @alignCast(4, data));
+        return ptr[0..@divExact(array.size, @sizeOf(T))];
     }
 };
 
@@ -75,7 +77,7 @@ pub fn Dispatcher(comptime Obj: type, comptime Data: type) type {
     const Payload = if (client) Obj.Event else Obj.Request;
     return struct {
         pub fn dispatcher(
-            implementation: ?*const c_void,
+            implementation: ?*const anyopaque,
             object: if (client) *wayland.client.wl.Proxy else *wayland.server.wl.Resource,
             opcode: u32,
             _: *const Message,
@@ -110,21 +112,4 @@ pub fn Dispatcher(comptime Obj: type, comptime Data: type) type {
             unreachable;
         }
     };
-}
-
-test "Fixed" {
-    const testing = @import("std").testing;
-
-    {
-        const initial: f64 = 10.5301837;
-        const val = Fixed.fromDouble(initial);
-        try testing.expectApproxEqAbs(initial, val.toDouble(), 1.0 / 256.0);
-        try testing.expectEqual(@as(i24, 10), val.toInt());
-    }
-
-    {
-        const val = Fixed.fromInt(10);
-        try testing.expectEqual(@as(f64, 10.0), val.toDouble());
-        try testing.expectEqual(@as(i24, 10), val.toInt());
-    }
 }

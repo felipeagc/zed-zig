@@ -7,7 +7,7 @@ const FaceType = @import("highlighter.zig").FaceType;
 
 pub const FileType = @This();
 
-allocator: *Allocator,
+allocator: Allocator,
 name: []const u8,
 extensions: [][]const u8,
 increase_indent_regex: ?Regex = null,
@@ -47,7 +47,7 @@ const Options = struct {
     } = null,
 };
 
-pub fn init(allocator: *Allocator, name: []const u8, json_desc: []const u8) !*FileType {
+pub fn init(allocator: Allocator, name: []const u8, json_desc: []const u8) !*FileType {
     const json_options = std.json.ParseOptions{ .allocator = allocator };
 
     var stream = std.json.TokenStream.init(json_desc);

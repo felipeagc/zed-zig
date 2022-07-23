@@ -13,8 +13,20 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const scanner = ScanProtocolsStep.create(b);
+    const wayland = std.build.Pkg{
+        .name = "wayland",
+        .source = .{ .generated = &scanner.result },
+    };
+
     scanner.addSystemProtocol("stable/xdg-shell/xdg-shell.xml");
     scanner.addSystemProtocol("unstable/xdg-decoration/xdg-decoration-unstable-v1.xml");
+
+    scanner.generate("wl_seat", 7);
+    scanner.generate("wl_shm", 1);
+    scanner.generate("wl_compositor", 5);
+    scanner.generate("wl_data_device_manager", 3);
+    scanner.generate("xdg_wm_base", 3);
+    scanner.generate("zxdg_decoration_manager_v1", 1);
 
     const exe = b.addExecutable("zed", "src/main.zig");
     exe.setTarget(target);
@@ -29,7 +41,7 @@ pub fn build(b: *std.build.Builder) void {
     if (target.getOsTag() == .linux) {
         scanner.addCSource(exe);
         exe.step.dependOn(&scanner.step);
-        exe.addPackage(scanner.getPkg());
+        exe.addPackage(wayland);
 
         exe.linkSystemLibrary("wayland-client");
         exe.linkSystemLibrary("wayland-egl");
@@ -41,9 +53,9 @@ pub fn build(b: *std.build.Builder) void {
 
     exe.addPackage(std.build.Pkg{
         .name = "window",
-        .path = .{.path = "./window/common.zig"},
+        .source = .{.path = "./window/common.zig"},
         .dependencies = &.{
-            scanner.getPkg(),
+            wayland,
         },
     });
 

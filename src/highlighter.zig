@@ -64,7 +64,7 @@ pub const ColorScheme = struct {
         };
     }
     
-    pub fn jellybeansTheme(_: *Allocator) !ColorScheme {
+    pub fn jellybeansTheme(_: Allocator) !ColorScheme {
         return comptime try ColorScheme.init(
             [_]FaceDesc{
                 // default:
@@ -120,7 +120,7 @@ pub const Token = struct {
 };
 
 pub const Highlighter = struct {
-    allocator: *Allocator,
+    allocator: Allocator,
     regex: Regex,
     patterns: []InternalPattern,
     default_face: FaceType,
@@ -147,7 +147,7 @@ pub const Highlighter = struct {
     };
 
     pub fn init(
-        allocator: *Allocator,
+        allocator: Allocator,
         default_face: FaceType,
         patterns: []const Pattern,
     ) !*Highlighter {
