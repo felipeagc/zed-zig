@@ -145,13 +145,17 @@ pub const Walker = struct {
                     .kind = base.kind,
                 };
             } else {
-                self.stack.pop().dir_it.dir.close();
+                var dir = self.stack.pop().dir_it.dir;
+                dir.close();
             }
         }
     }
 
     pub fn deinit(self: *Walker) void {
-        while (self.stack.popOrNull()) |*item| item.dir_it.dir.close();
+        while (self.stack.popOrNull()) |*item| {
+            var dir = item.dir_it.dir;
+            dir.close();
+        }
         self.stack.deinit();
         self.name_buffer.deinit();
         if (self.ignore_regex) |ignore_regex| {
