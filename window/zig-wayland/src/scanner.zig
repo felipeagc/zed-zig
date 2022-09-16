@@ -1252,7 +1252,7 @@ fn trimPrefix(s: []const u8) []const u8 {
 
 const Case = enum { title, camel };
 
-fn formatCaseImpl(case: Case, comptime trim: bool) type {
+fn formatCaseImpl(comptime case: Case, comptime trim: bool) type {
     return struct {
         pub fn f(
             bytes: []const u8,

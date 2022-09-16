@@ -15,9 +15,9 @@ const c = @cImport({
 
 pub const win = @import("window");
 
-pub const OnKeyCallback = fn (key: win.Key, mods: win.KeyMods) void;
-pub const OnCharCallback = fn (codepoint: u32) void;
-pub const OnScrollCallback = fn (dx: f64, dy: f64) void;
+pub const OnKeyCallback = *const fn (key: win.Key, mods: win.KeyMods) void;
+pub const OnCharCallback = *const fn (codepoint: u32) void;
+pub const OnScrollCallback = *const fn (dx: f64, dy: f64) void;
 
 const Renderer = struct {
     allocator: Allocator,

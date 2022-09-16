@@ -40,22 +40,22 @@ pub const Event = union(enum) {
 };
 
 pub const WindowSystem = struct {
-    deinit_fn: fn (self: *WindowSystem) void,
-    next_event_fn: fn (self: *WindowSystem) ?Event,
-    poll_events_fn: fn (self: *WindowSystem) anyerror!void,
-    wait_events_fn: fn (self: *WindowSystem) anyerror!void,
-    push_event_fn: fn (self: *WindowSystem, event: Event) anyerror!void,
-    get_clipboard_content_alloc_fn: fn (
+    deinit_fn: *const fn (self: *WindowSystem) void,
+    next_event_fn: *const fn (self: *WindowSystem) ?Event,
+    poll_events_fn: *const fn (self: *WindowSystem) anyerror!void,
+    wait_events_fn: *const fn (self: *WindowSystem) anyerror!void,
+    push_event_fn: *const fn (self: *WindowSystem, event: Event) anyerror!void,
+    get_clipboard_content_alloc_fn: *const fn (
         self: *WindowSystem,
         allocator: Allocator,
     ) anyerror!?[]const u8,
-    set_clipboard_content_fn: fn (
+    set_clipboard_content_fn: *const fn (
         self: *WindowSystem,
         content: []const u8,
     ) anyerror!void,
-    gl_swap_interval_fn: fn (self: *WindowSystem, interval: i32) void,
+    gl_swap_interval_fn: *const fn (self: *WindowSystem, interval: i32) void,
 
-    create_window_fn: fn (
+    create_window_fn: *const fn (
         self: *WindowSystem,
         width: i32,
         height: i32,
@@ -128,11 +128,11 @@ pub const WindowSystem = struct {
 };
 
 pub const Window = struct {
-    deinit_fn: fn (self: *Window) void,
-    should_close_fn: fn (self: *Window) bool,
-    get_size_fn: fn (self: *Window, width: *i32, height: *i32) void,
-    gl_make_context_current_fn: fn (self: *Window) void,
-    gl_swap_buffers_fn: fn (self: *Window) void,
+    deinit_fn: *const fn (self: *Window) void,
+    should_close_fn: *const fn (self: *Window) bool,
+    get_size_fn: *const fn (self: *Window, width: *i32, height: *i32) void,
+    gl_make_context_current_fn: *const fn (self: *Window) void,
+    gl_swap_buffers_fn: *const fn (self: *Window) void,
 
     pub fn deinit(self: *Window) void {
         self.deinit_fn(self);

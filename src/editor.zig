@@ -17,7 +17,7 @@ const BUILD_BUFFER_NAME = "** build **";
 const MESSAGES_BUFFER_NAME = "** messages **";
 const MAX_FONT_SIZE = 128;
 
-pub const Command = fn (panel: *Panel, args: [][]const u8) anyerror!void;
+pub const Command = *const fn (panel: *Panel, args: [][]const u8) anyerror!void;
 
 pub const EditorOptions = struct {
     main_font: *renderer.Font,
@@ -84,17 +84,17 @@ const Editor = struct {
 pub const PanelVT = struct {
     name: []const u8,
 
-    get_status_line: fn (self: *Panel, allocator: Allocator) anyerror![]const u8,
-    get_key_map: fn (self: *Panel) *KeyMap,
-    draw: fn (self: *Panel, rect: renderer.Rect) anyerror!void,
-    deinit: fn (self: *Panel) void,
+    get_status_line: *const fn (self: *Panel, allocator: Allocator) anyerror![]const u8,
+    get_key_map: *const fn (self: *Panel) *KeyMap,
+    draw: *const fn (self: *Panel, rect: renderer.Rect) anyerror!void,
+    deinit: *const fn (self: *Panel) void,
 
-    on_key_seq: ?fn (self: *Panel, []const u8) anyerror!KeyResult = null,
-    on_char: ?fn (self: *Panel, codepoint: u32) anyerror!bool = null,
-    on_scroll: ?fn (self: *Panel, dx: f64, dy: f64) anyerror!void = null,
+    on_key_seq: ?*const fn (self: *Panel, []const u8) anyerror!KeyResult = null,
+    on_char: ?*const fn (self: *Panel, codepoint: u32) anyerror!bool = null,
+    on_scroll: ?*const fn (self: *Panel, dx: f64, dy: f64) anyerror!void = null,
 
-    register_vt: ?fn (allocator: Allocator) anyerror!void = null,
-    unregister_vt: ?fn () void = null,
+    register_vt: ?*const fn (allocator: Allocator) anyerror!void = null,
+    unregister_vt: ?*const fn () void = null,
 
     command_registry: ?*CommandRegistry = null,
 };
@@ -448,7 +448,7 @@ pub fn init(allocator: Allocator) !void {
     const default_filetype = try FileType.init(
         allocator,
         "default",
-        @embedFile("../filetypes/default.json"),
+        @embedFile("filetypes/default.json"),
     );
 
     g_editor = Editor{
@@ -615,19 +615,19 @@ pub fn init(allocator: Allocator) !void {
     try registerFileType(try FileType.init(
         allocator,
         "c",
-        @embedFile("../filetypes/c.json"),
+        @embedFile("filetypes/c.json"),
     ));
 
     try registerFileType(try FileType.init(
         allocator,
         "zig",
-        @embedFile("../filetypes/zig.json"),
+        @embedFile("filetypes/zig.json"),
     ));
 
     try registerFileType(try FileType.init(
         allocator,
         "ocaml",
-        @embedFile("../filetypes/ocaml.json"),
+        @embedFile("filetypes/ocaml.json"),
     ));
 
     logMessage("Message 1\n", .{}) catch {};

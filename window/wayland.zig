@@ -121,7 +121,7 @@ pub const WaylandWindowSystem = struct {
 
         const xkb_compose_table = c.xkb_compose_table_new_from_locale(
             xkb_context,
-            locale_z,
+            locale_z.ptr,
             0, // no flags
         ) orelse return error.XkbInitError;
 
